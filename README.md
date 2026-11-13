@@ -4,7 +4,7 @@ Proxy local com painel de modelos, contas e histórico de requisições.
 
 ## Requisitos
 
-- Python 3.9 ou mais recente, com `pip` disponível.
+- Python 3.9 ou mais recente.
 - Conexão com a internet para instalar dependências e utilizar os modelos.
 
 ## Instalação e inicialização

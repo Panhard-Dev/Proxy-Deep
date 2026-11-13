@@ -3,7 +3,6 @@
 import json
 import os
 import secrets
-import shutil
 import subprocess
 import sys
 import threading
@@ -17,9 +16,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 TOKEN = secrets.token_urlsafe(32)
-DEPS = ROOT / '.deps' / (sys.implementation.cache_tag + '-' + sys.platform)
 STEPS = [{'name': n, 'status': 'pending', 'detail': 'Aguardando'} for n in (
-    'Python e arquivos do aplicativo', 'Dependências de segurança',
+    'Python e arquivos do aplicativo', 'Bibliotecas necessárias',
     'Dados locais', 'Contas sincronizadas', 'Proxy e painel')]
 STATE = {'steps': STEPS, 'done': False, 'panel': None, 'message': ''}
 LOCK = threading.Lock()
@@ -32,20 +30,13 @@ def private_file(path, mode='w'):
     return os.fdopen(fd, mode, encoding='utf-8')
 
 def child_env():
-    env = os.environ.copy()
-    if DEPS.exists(): env['PYTHONPATH'] = str(DEPS) + os.pathsep + env.get('PYTHONPATH', '')
-    return env
+    return os.environ.copy()
 
-def ensure_crypto():
-    def available():
-        return subprocess.run([sys.executable, '-c', 'from cryptography.hazmat.primitives.ciphers.aead import AESGCM'], env=child_env(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
-    if available(): return
-    update(1, 'running', 'Instalando a biblioteca de segurança...')
-    DEPS.mkdir(parents=True, exist_ok=True)
-    cmd = [sys.executable, '-m', 'pip', 'install', '--disable-pip-version-check', '--target', str(DEPS), '-r', str(ROOT / 'requirements.txt')]
-    with private_file(ROOT / '.inicio.log') as log:
-        result = subprocess.run(cmd, env=child_env(), stdout=log, stderr=subprocess.STDOUT, timeout=240)
-    if result.returncode or not available(): raise RuntimeError('Falha ao instalar a dependência. Verifique a internet e o pip.')
+def ensure_dependencies():
+    import ssl, sqlite3
+    if not ssl.OPENSSL_VERSION or not sqlite3.sqlite_version:
+        raise RuntimeError('Bibliotecas SSL ou SQLite não estão disponíveis no Python.')
+
 
 def start(args, log_name, environment=None):
     env = child_env(); env.update(environment or {})
@@ -79,10 +70,10 @@ def prepare():
     try:
         update(0,'running','Conferindo instalação...')
         if sys.version_info < (3,9): raise RuntimeError('É necessário Python 3.9 ou mais recente.')
-        for name in ('proxy.py','gerenciar_contas.py','sincronizar_contas.py','contas_proxy.py','uso_proxy.py','painel.html','painel.js','painel.css','verificacao.html','inicio.css','inicio.js','inicio_painel.js','marca.png','requirements.txt'):
+        for name in ('proxy.py','gerenciar_contas.py','sincronizar_contas.py','contas_proxy.py','uso_proxy.py','painel.html','painel.js','painel.css','verificacao.html','inicio.css','inicio.js','inicio_painel.js','marca.png'):
             if not (ROOT/name).is_file(): raise RuntimeError('Arquivo necessário ausente: '+name)
         update(0,'ok','Python e arquivos encontrados.')
-        stage=1;update(1,'running','Verificando biblioteca de cifragem...');ensure_crypto();update(1,'ok','Biblioteca de cifragem pronta.')
+        stage=1;update(1,'running','Verificando bibliotecas do Python...');ensure_dependencies();update(1,'ok','Bibliotecas SSL e SQLite prontas.')
         stage=2;update(2,'running','Verificando contas e histórico local...')
         accounts=ROOT/'contas.json'
         if not accounts.exists():
