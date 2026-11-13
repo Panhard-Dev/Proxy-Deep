@@ -1,0 +1,22 @@
+# Sessões, histórico e arquivos locais
+contas.json
+contas.json.tmp
+*.sqlite3
+*.sqlite3-*
+runtime_proxy.json
+.painel.log
+.proxy.log
+.painel.runtime.json
+.sincronizacao.json
+*.log
+__pycache__/
+*.py[cod]
+.deps/
+# Dados de build e configurações locais da Cloudflare
+sync-cloudflare/worker-app/node_modules/
+sync-cloudflare/worker-app/.cloudflare/
+sync-cloudflare/worker-app/.deploy-secret.json
+sync-cloudflare/.link-staging
+
+# Build de publicação não é necessário para executar o proxy
+sync-cloudflare/worker-app/

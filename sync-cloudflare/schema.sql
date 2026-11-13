@@ -1,0 +1,5 @@
+CREATE TABLE IF NOT EXISTS vault (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  revision INTEGER NOT NULL,
+  envelope TEXT NOT NULL
+);
