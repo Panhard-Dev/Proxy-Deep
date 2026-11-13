@@ -233,8 +233,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             abrir_login_temporario(destino)
         except (OSError, RuntimeError) as error:
-            return self.json(503,{'message':str(error) if isinstance(error,RuntimeError) else 'Não foi possível abrir o navegador. Verifique a instalação do Edge, Brave ou Chrome.'})
-        return self.json(200,{'message':'Login aberto em uma janela temporária. Conclua o login nela.'})
+            mensagem=str(error) if isinstance(error,RuntimeError) else 'Não foi possível abrir o navegador automaticamente.'
+            return self.json(503,{'message':mensagem+' Copie o link e abra neste computador.','login_url':destino})
+        return self.json(200,{'message':'Login aberto em uma janela temporária. Se necessário, copie o link abaixo.','login_url':destino})
 
 def main():
     threading.Thread(target=ciclo_sincronizacao,daemon=True).start()
