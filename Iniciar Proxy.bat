@@ -1,9 +1,8 @@
 @echo off
 cd /d "%~dp0"
-where py >nul 2>nul
-if %errorlevel%==0 (
-  py -3 iniciar.py %*
-) else (
-  python iniciar.py %*
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%~dp0iniciar_windows.ps1" %*
+if errorlevel 1 (
+  echo.
+  echo Nao foi possivel iniciar. Leia a mensagem acima.
+  pause
 )
-pause

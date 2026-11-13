@@ -14,26 +14,44 @@ BASE="https://api.deepai.org/deepai_code"
 UI=os.environ.get('DEEPAI_PAINEL_TOKEN') or secrets.token_urlsafe(32)
 trava=threading.Lock()
 
+def localizar_navegador():
+    candidatos=['chromium','chromium-browser','google-chrome','chrome','brave-browser','brave','microsoft-edge','msedge']
+    for nome in candidatos:
+        encontrado=shutil.which(nome)
+        if encontrado: return encontrado
+    if sys.platform == 'win32':
+        bases=[os.environ.get(x) for x in ('LOCALAPPDATA','PROGRAMFILES','PROGRAMFILES(X86)')]
+        relativos=[('Microsoft','Edge','Application','msedge.exe'),
+                   ('BraveSoftware','Brave-Browser','Application','brave.exe'),
+                   ('Google','Chrome','Application','chrome.exe'),
+                   ('Chromium','Application','chrome.exe')]
+        for base in filter(None,bases):
+            for partes in relativos:
+                candidato=Path(base).joinpath(*partes)
+                if candidato.is_file(): return str(candidato)
+    if sys.platform == 'darwin':
+        for nome in ('Microsoft Edge','Brave Browser','Google Chrome','Chromium'):
+            candidato=Path('/Applications')/(nome+'.app')/'Contents'/'MacOS'/nome
+            if candidato.is_file(): return str(candidato)
+    achados=sorted((Path.home()/'.cache/ms-playwright').glob('chromium-*/chrome-linux64/chrome'),reverse=True)
+    return str(achados[0]) if achados else None
+
 def abrir_login_temporario(url):
-    candidatos = ['chromium', 'chromium-browser', 'google-chrome', 'chrome', 'brave-browser', 'microsoft-edge', 'msedge']
-    navegador = next((shutil.which(nome) for nome in candidatos if shutil.which(nome)), None)
+    navegador=localizar_navegador()
     if not navegador:
-        achados = sorted((Path.home()/'.cache/ms-playwright').glob('chromium-*/chrome-linux64/chrome'), reverse=True)
-        navegador = str(achados[0]) if achados else None
-    if not navegador:
-        raise RuntimeError('Chromium não encontrado')
-    perfil = tempfile.mkdtemp(prefix='deepai-login-')
+        raise RuntimeError('Não encontrei Microsoft Edge, Brave, Chrome ou Chromium para abrir o login.')
+    perfil=tempfile.mkdtemp(prefix='deepai-login-')
     try:
-        processo = subprocess.Popen([navegador, '--user-data-dir='+perfil, '--no-first-run',
-                                     '--no-default-browser-check', '--new-window', url],
-                                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        processo=subprocess.Popen([navegador,'--user-data-dir='+perfil,'--no-first-run',
+                                   '--no-default-browser-check','--new-window',url],
+                                  stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
     except OSError:
-        shutil.rmtree(perfil, ignore_errors=True)
+        shutil.rmtree(perfil,ignore_errors=True)
         raise
     def limpar():
         processo.wait()
-        shutil.rmtree(perfil, ignore_errors=True)
-    threading.Thread(target=limpar, daemon=True).start()
+        shutil.rmtree(perfil,ignore_errors=True)
+    threading.Thread(target=limpar,daemon=True).start()
 
 def carregar():
     return contas_proxy.carregar()
@@ -163,8 +181,13 @@ class Handler(BaseHTTPRequestHandler):
                 rows=list(executor.map(lambda item:consultar_saldo(*item,force=q.get('forcar',[''])[0]=='1'),enumerate(contas)))
             return self.json(200,{'accounts':rows})
         if u.path=='/api/modelos' and autorizado:
+            if not carregar(): return self.json(200,{'models':[],'message':'Adicione uma conta para carregar os modelos.'})
             try: return self.json(200,{'models':[proxy._core.public_model(m) for m in proxy._core.load_catalog()]})
-            except (OSError,ValueError,KeyError): return self.json(502,{'error':'Catálogo indisponível'})
+            except urllib.error.HTTPError as error:
+                if error.code in (401,403): return self.json(error.code,{'error':'Conta recusada pela DeepAI. Adicione novamente sua conta.'})
+                if error.code==429: return self.json(429,{'error':'Limite temporário. Aguarde e tente novamente.'})
+                return self.json(502,{'error':'DeepAI indisponível; tente novamente.'})
+            except (OSError,ValueError,KeyError): return self.json(503,{'error':'Não foi possível consultar a DeepAI; verifique sua conexão.'})
         if u.path!='/auth-callback': return self.enviar(404,'Não encontrado.')
         state=q.get('state',[''])[0];code=q.get('code',[''])[0]
         if not code or len(code)>4096: return self.enviar(400,'Login inválido ou expirado.')
@@ -209,8 +232,8 @@ class Handler(BaseHTTPRequestHandler):
         destino=base+'/deepai_code/desktop_auth/?'+urllib.parse.urlencode({'state':estado,'port':self.server.server_port})
         try:
             abrir_login_temporario(destino)
-        except (OSError, RuntimeError):
-            return self.json(503,{'message':'Não foi possível abrir o navegador temporário.'})
+        except (OSError, RuntimeError) as error:
+            return self.json(503,{'message':str(error) if isinstance(error,RuntimeError) else 'Não foi possível abrir o navegador. Verifique a instalação do Edge, Brave ou Chrome.'})
         return self.json(200,{'message':'Login aberto em uma janela temporária. Conclua o login nela.'})
 
 def main():
