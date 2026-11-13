@@ -1,5 +1,1 @@
-CREATE TABLE IF NOT EXISTS vault (
-  id INTEGER PRIMARY KEY CHECK (id = 1),
-  revision INTEGER NOT NULL,
-  envelope TEXT NOT NULL
-);
+CREATE TABLE IF NOT EXISTS protected_accounts (id TEXT PRIMARY KEY, nonce TEXT NOT NULL, ciphertext TEXT NOT NULL);

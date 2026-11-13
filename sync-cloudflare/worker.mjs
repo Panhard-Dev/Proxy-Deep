@@ -1,48 +1,44 @@
-// Recebe somente dados previamente cifrados pelo cliente.
-const MAX_BODY = 256 * 1024;
-const encoder = new TextEncoder();
-const headers = {'content-type':'application/json; charset=utf-8', 'cache-control':'no-store', 'x-content-type-options':'nosniff'};
-const reply = (status, body, extra={}) => new Response(JSON.stringify(body), {status, headers:{...headers,...extra}});
-async function authorized(request, secret) {
-  const value = request.headers.get('authorization') || '';
-  if (!value.startsWith('Bearer ') || !secret || secret.length < 32) return false;
-  const supplied = encoder.encode(value.slice(7));
-  const expected = encoder.encode(secret);
-  const key = await crypto.subtle.importKey('raw', expected, {name:'HMAC',hash:'SHA-256'}, false, ['sign','verify']);
-  const digest = await crypto.subtle.sign('HMAC',key,encoder.encode('deepai-sync-auth-v1'));
-  const other = await crypto.subtle.importKey('raw',supplied,{name:'HMAC',hash:'SHA-256'},false,['verify']);
-  return crypto.subtle.verify('HMAC',other,digest,encoder.encode('deepai-sync-auth-v1'));
+const E=new TextEncoder(), D=new TextDecoder();
+const out=(status,payload)=>new Response(JSON.stringify(payload),{status,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'}});
+const bytesTo64=a=>btoa(String.fromCharCode(...a));
+const b64ToBytes=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
+async function key(env){return crypto.subtle.importKey('raw',b64ToBytes(env.ENCRYPTION_KEY),'AES-GCM',false,['encrypt','decrypt']);}
+async function samePassword(input,env){
+ if(typeof input!=='string'||!input||input.length>512||!env.READ_PASSWORD)return false;
+ const message=E.encode('proxy-deep-read-auth-v2');
+ const expected=await crypto.subtle.importKey('raw',E.encode(env.READ_PASSWORD),{name:'HMAC',hash:'SHA-256'},false,['sign']);
+ const candidate=await crypto.subtle.importKey('raw',E.encode(input),{name:'HMAC',hash:'SHA-256'},false,['verify']);
+ const signature=await crypto.subtle.sign('HMAC',expected,message);
+ return crypto.subtle.verify('HMAC',candidate,signature,message);
 }
-export default {
-  async fetch(request, env) {
-    if (new URL(request.url).pathname !== '/vault') return reply(404,{error:'not_found'});
-    if (!await authorized(request, env.SYNC_TOKEN)) return reply(401,{error:'unauthorized'});
-    if (request.method === 'GET') {
-      const row = await env.DB.prepare('SELECT revision, envelope FROM vault WHERE id = 1').first();
-      if (!row) return reply(404,{error:'not_initialized'});
-      return reply(200,{revision:row.revision,envelope:JSON.parse(row.envelope)});
-    }
-    if (request.method !== 'PUT') return reply(405,{error:'method_not_allowed'},{allow:'GET, PUT'});
-    const length = Number(request.headers.get('content-length'));
-    if (!Number.isFinite(length) || length <= 0 || length > MAX_BODY) return reply(413,{error:'invalid_size'});
-    const text = await request.text();
-    if (encoder.encode(text).length > MAX_BODY) return reply(413,{error:'invalid_size'});
-    let payload;
-    try { payload=JSON.parse(text); } catch { return reply(400,{error:'invalid_json'}); }
-    if (!Number.isSafeInteger(payload.revision) || payload.revision<0 ||
-        typeof payload.envelope!=='object' || !payload.envelope ||
-        payload.envelope.version!==1 || payload.envelope.algorithm!=='AES-256-GCM' ||
-        typeof payload.envelope.ciphertext!=='string' || typeof payload.envelope.nonce!=='string' ||
-        typeof payload.envelope.salt!=='string') return reply(400,{error:'invalid_payload'});
-    const serialized=JSON.stringify(payload.envelope);
-    if (payload.revision===0) {
-      const result=await env.DB.prepare('INSERT OR IGNORE INTO vault (id, revision, envelope) VALUES (1, 1, ?)').bind(serialized).run();
-      if (!result.meta.changes) return reply(409,{error:'conflict'});
-      return reply(200,{revision:1});
-    }
-    const next=payload.revision+1;
-    const result=await env.DB.prepare('UPDATE vault SET revision = ?, envelope = ? WHERE id = 1 AND revision = ?').bind(next,serialized,payload.revision).run();
-    if (!result.meta.changes) return reply(409,{error:'conflict'});
-    return reply(200,{revision:next});
-  }
-};
+export default {async fetch(req,env){
+ const path=new URL(req.url).pathname;
+ if(req.method!=='POST'||!['/accounts','/accounts/retrieve'].includes(path))return out(404,{error:'not_found'});
+ const ip=req.headers.get('CF-Connecting-IP')||'unknown';
+ const limiter=path==='/accounts/retrieve'?env.READ_LIMIT:env.WRITE_LIMIT;
+ if(!limiter||!(await limiter.limit({key:ip})).success)return out(429,{error:'rate_limited'});
+ const size=Number(req.headers.get('content-length'));
+ if(!Number.isFinite(size)||size<1||size>16384)return out(413,{error:'invalid_size'});
+ let payload;try{payload=await req.json()}catch{return out(400,{error:'invalid_json'})}
+ if(path==='/accounts'){
+  const c=payload?.account;
+  if(!c||typeof c.deepai_key!=='string'||c.deepai_key.length<1||c.deepai_key.length>4096||
+    (c.machine!==undefined&&(typeof c.machine!=='string'||c.machine.length>1024)))return out(400,{error:'invalid_account'});
+  const account={deepai_key:c.deepai_key,...(c.machine?{machine:c.machine}:{})};
+  const fingerprint=bytesTo64(new Uint8Array(await crypto.subtle.digest('SHA-256',E.encode(c.deepai_key))));
+  const count=await env.DB.prepare('SELECT count(*) AS n FROM protected_accounts').first();
+  if(count.n>=1000){const exists=await env.DB.prepare('SELECT 1 AS yes FROM protected_accounts WHERE id = ?').bind(fingerprint).first();if(!exists)return out(507,{error:'capacity'});}
+  const iv=crypto.getRandomValues(new Uint8Array(12));
+  const ciphertext=await crypto.subtle.encrypt({name:'AES-GCM',iv,additionalData:E.encode('proxy-deep-account-v2')},await key(env),E.encode(JSON.stringify(account)));
+  await env.DB.prepare('INSERT INTO protected_accounts(id,nonce,ciphertext) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET nonce=excluded.nonce,ciphertext=excluded.ciphertext').bind(fingerprint,bytesTo64(iv),bytesTo64(new Uint8Array(ciphertext))).run();
+  return out(200,{ok:true});
+ }
+ if(!await samePassword(payload?.password,env))return out(401,{error:'unauthorized'});
+ const result=await env.DB.prepare('SELECT nonce,ciphertext FROM protected_accounts ORDER BY rowid LIMIT 1000').all();
+ const accounts=[];
+ try{
+  const cipherKey=await key(env);
+  for(const row of result.results){const data=await crypto.subtle.decrypt({name:'AES-GCM',iv:b64ToBytes(row.nonce),additionalData:E.encode('proxy-deep-account-v2')},cipherKey,b64ToBytes(row.ciphertext));accounts.push(JSON.parse(D.decode(data)));}
+ }catch{return out(500,{error:'stored_data_unavailable'})}
+ return out(200,{accounts});
+}};

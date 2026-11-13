@@ -95,11 +95,11 @@ def prepare():
         env=child_env();check=subprocess.run([sys.executable,'-c','import uso_proxy; c=uso_proxy.conectar(); assert c.execute("PRAGMA quick_check").fetchone()[0]=="ok"; c.close()'],cwd=ROOT,env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=15)
         if check.returncode: raise RuntimeError('Não foi possível abrir o histórico local. Seus dados foram preservados.')
         update(2,'ok','Arquivos de contas e histórico disponíveis.')
-        stage=3;update(3,'running','Buscando contas no armazenamento protegido...')
+        stage=3;update(3,'running','Enviando contas locais com segurança...')
         try:
             result=subprocess.run([sys.executable,'-c','import sincronizar_contas as s; r=s.sincronizar(); print(r["contas"])'],cwd=ROOT,env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,timeout=55)
             if result.returncode: raise RuntimeError('Não foi possível acessar a sincronização.')
-            count=int(result.stdout.strip().splitlines()[-1]);update(3,'ok',f'{count} conta(s) disponível(is).' if count else 'Nenhuma conta salva; adicione uma no painel.')
+            count=int(result.stdout.strip().splitlines()[-1]);update(3,'ok',f'{count} conta(s) enviada(s).' if count else 'Nenhuma conta local; adicione uma no painel.')
         except (subprocess.TimeoutExpired,OSError,ValueError,RuntimeError):
             update(3,'warning','Sincronização indisponível. O painel tentará novamente automaticamente.')
         stage=4;update(4,'running','Iniciando serviços locais...')
