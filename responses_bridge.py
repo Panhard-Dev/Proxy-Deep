@@ -207,6 +207,8 @@ def _relay(handler, upstream, request, custom, content_filter=None, reasoning_fi
         i=start_message()
         msg['content']=[{'type':'output_text','text':fallback_text,'annotations':[],'logprobs':[]}]
         event('response.output_text.delta',item_id=msg['id'],output_index=i,content_index=0,delta=fallback_text,logprobs=[])
+    if msg is None and not by_index and finish != 'length':
+        raise RuntimeError('A DeepAI retornou uma resposta sem texto ou ferramenta.')
     for i,item in enumerate(output):
         if item['type']=='message':
             part=item['content'][0]; event('response.output_text.done',item_id=item['id'],output_index=i,content_index=0,text=part['text'],logprobs=[])
@@ -249,7 +251,7 @@ def relay(handler, upstream, request, custom, content_filter=None, reasoning_fil
     except (OSError,ValueError,TypeError,KeyError,RuntimeError) as exc:
         message='DeepAI — Não foi possível concluir a resposta. Tente novamente.'
         if not handler._bridge_started:
-            handler.reply(502,message)
+            handler.fail(502,message)
         elif request.get('stream'):
             ctx=handler._bridge_context
             response={'id':ctx['id'],'object':'response','created_at':ctx['created_at'],'status':'failed','model':ctx['model'],'output':[],

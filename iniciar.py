@@ -70,7 +70,7 @@ def prepare():
     try:
         update(0,'running','Conferindo instalação...')
         if sys.version_info < (3,9): raise RuntimeError('É necessário Python 3.9 ou mais recente.')
-        for name in ('proxy.py','gerenciar_contas.py','sincronizar_contas.py','contas_proxy.py','uso_proxy.py','painel.html','painel.js','painel.css','verificacao.html','inicio.css','inicio.js','inicio_painel.js','marca.png'):
+        for name in ('proxy.py','gerenciar_contas.py','sincronizar_contas.py','contas_proxy.py','uso_proxy.py','anthropic_bridge.py','painel.html','painel.js','painel.css','verificacao.html','inicio.css','inicio.js','inicio_painel.js','marca.png'):
             if not (ROOT/name).is_file(): raise RuntimeError('Arquivo necessário ausente: '+name)
         update(0,'ok','Python e arquivos encontrados.')
         stage=1;update(1,'running','Verificando bibliotecas do Python...');ensure_dependencies();update(1,'ok','Bibliotecas SSL e SQLite prontas.')

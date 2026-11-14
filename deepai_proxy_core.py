@@ -18,6 +18,7 @@ import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import responses_bridge
+import anthropic_bridge
 import contas_proxy
 
 BASE = "https://api.deepai.org/deepai_code"
@@ -199,6 +200,7 @@ class Gateway(BaseHTTPRequestHandler):
 
     def proxy_chat(self, payload):
         payload = normalize_chat_payload(payload)
+        payload.setdefault('stream', False)
         requested_model = payload["model"]
         body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         try:
@@ -283,6 +285,13 @@ class Gateway(BaseHTTPRequestHandler):
                 self.wfile.write(chunk)
                 self.wfile.flush()
 
+    def proxy_anthropic(self, payload):
+        payload = normalize_chat_payload(payload)
+        request = anthropic_bridge.translate(payload)
+        body = json.dumps(request, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+        with upstream_open('/chat/completions', body) as upstream:
+            anthropic_bridge.relay(self, upstream, payload)
+
     def handle_request(self):
         if self.headers.get("Origin"):
             return self.fail(403, "Requisições de navegador não são permitidas.")
@@ -302,6 +311,8 @@ class Gateway(BaseHTTPRequestHandler):
                 return self.proxy_chat(self.read_body())
             if self.command == "POST" and path == "/v1/responses":
                 return self.proxy_responses(self.read_body())
+            if self.command == "POST" and path == "/v1/messages":
+                return self.proxy_anthropic(self.read_body())
             return self.fail(404, "Endpoint não suportado.", code="not_found")
         except responses_bridge.Unsupported as error:
             return self.fail(400, str(error), code="unsupported_request")

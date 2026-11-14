@@ -2,6 +2,8 @@
 
 Proxy local com painel de modelos, contas e histórico de requisições.
 
+APIs compatíveis: OpenAI Chat Completions e Responses, e Anthropic Messages.
+
 ## Requisitos
 
 - Windows: o iniciador usa Python instalado ou baixa uma cópia isolada oficial automaticamente.
