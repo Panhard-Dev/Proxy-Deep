@@ -1,5 +1,6 @@
 """Translate the Responses subset used by Codex to Chat Completions."""
 import hashlib, json, secrets, time
+import cadencia_stream
 
 class Unsupported(ValueError): pass
 
@@ -178,7 +179,8 @@ def _relay(handler, upstream, request, custom, content_filter=None, reasoning_fi
                     i=start_message()
                     if not msg['content']: msg['content']=[{'type':'output_text','text':'','annotations':[],'logprobs':[]}]
                     msg['content'][0]['text']+=text
-                    event('response.output_text.delta',item_id=msg['id'],output_index=i,content_index=0,delta=text,logprobs=[])
+                    for parte in (cadencia_stream.partes(text) if streaming else [text]):
+                        event('response.output_text.delta',item_id=msg['id'],output_index=i,content_index=0,delta=parte,logprobs=[])
             thought=delta.get('reasoning_content')
             if not isinstance(thought,str): thought=delta.get('reasoning')
             if isinstance(thought,str) and thought:

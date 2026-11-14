@@ -1,6 +1,7 @@
 """Tradução da API Messages para Chat Completions."""
 import json
 import secrets
+import cadencia_stream
 
 from responses_bridge import Unsupported
 
@@ -103,7 +104,8 @@ def relay(handler, upstream, payload):
                     text_index = len(blocks); blocks.append({'type': 'text', 'text': ''})
                     event('content_block_start', index=text_index, content_block={'type': 'text', 'text': ''})
                 blocks[text_index]['text'] += text
-                event('content_block_delta', index=text_index, delta={'type': 'text_delta', 'text': text})
+                for parte in (cadencia_stream.partes(text) if streaming else [text]):
+                    event('content_block_delta', index=text_index, delta={'type': 'text_delta', 'text': parte})
             for call in delta.get('tool_calls') or []:
                 ci = call.get('index', 0); fn = call.get('function') or {}
                 if ci not in calls:

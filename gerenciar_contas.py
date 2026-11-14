@@ -6,6 +6,7 @@ import contas_proxy
 import protecao_proxy
 import uso_proxy
 import sincronizar_contas
+import atualizacao
 import proxy
 import iniciar
 import socket
@@ -205,6 +206,8 @@ class Handler(BaseHTTPRequestHandler):
         if u.path=='/api/login/estado' and autorizado:
             with trava: estado=getattr(self.server,'resultado_login','aguardando')
             return self.json(200,{'status':estado})
+        if u.path=='/api/atualizacao' and autorizado:
+            return self.json(200,atualizacao.verificar())
         if u.path=='/api/painel' and autorizado:
             with trava: contas=carregar()
             runtime={}

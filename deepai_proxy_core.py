@@ -21,6 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import responses_bridge
 import anthropic_bridge
 import contas_proxy
+import cadencia_stream
 
 BASE = "https://api.deepai.org/deepai_code"
 INSTANCE = secrets.token_hex(16)
@@ -244,6 +245,16 @@ class Gateway(BaseHTTPRequestHandler):
                     if raw and raw != b"[DONE]":
                         try:
                             event = normalize_stream_event(json.loads(raw), requested_model)
+                            choices = event.get('choices') if isinstance(event, dict) else None
+                            if isinstance(choices, list) and len(choices) == 1 and isinstance(choices[0], dict):
+                                choice = choices[0]
+                                delta = choice.get('delta')
+                                if isinstance(delta, dict) and set(delta) == {'content'} and isinstance(delta['content'], str) and not choice.get('finish_reason') and not event.get('usage'):
+                                    for parte in cadencia_stream.partes(delta['content']):
+                                        copia = {**event, 'choices': [{**choice, 'delta': {'content': parte}}]}
+                                        self.wfile.write(b'data: ' + json.dumps(copia, ensure_ascii=False, separators=(',', ':')).encode('utf-8') + b'\n\n')
+                                        self.wfile.flush()
+                                    continue
                             line = b"data: " + json.dumps(event, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n"
                         except (ValueError, UnicodeDecodeError):
                             pass
