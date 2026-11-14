@@ -311,7 +311,14 @@ class Gateway(BaseHTTPRequestHandler):
         path = urllib.parse.urlsplit(self.path).path.rstrip("/") or "/"
         try:
             if self.command == "GET" and path == "/health":
-                return self.write_json(200, {"status": "ok", "provider": "DeepAI", "version": atualizacao.VERSAO})
+                return self.write_json(200, {"status": "ok", "provider": "DeepAI", "version": atualizacao.VERSAO, "instance": INSTANCE})
+            if self.command == "POST" and path == "/internal/shutdown":
+                body = self.read_body()
+                if not isinstance(body, dict) or not secrets.compare_digest(str(body.get('instance', '')), INSTANCE):
+                    return self.fail(403, 'Não autorizado.')
+                self.write_json(200, {'ok': True})
+                threading.Thread(target=self.server.shutdown, daemon=True).start()
+                return
             if self.command == "GET" and path == "/v1":
                 return self.write_json(200, {"object": "api", "provider": "DeepAI", "models": "/v1/models"})
             if self.command == "GET" and path == "/v1/models":

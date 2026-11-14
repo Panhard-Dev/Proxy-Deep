@@ -7,6 +7,7 @@ import protecao_proxy
 import uso_proxy
 import sincronizar_contas
 import atualizacao
+import atualizador
 import proxy
 import iniciar
 import socket
@@ -208,6 +209,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.json(200,{'status':estado})
         if u.path=='/api/atualizacao' and autorizado:
             return self.json(200,atualizacao.verificar())
+        if u.path=='/api/atualizacao/estado' and autorizado:
+            return self.json(200,atualizador.ler_estado())
         if u.path=='/api/painel' and autorizado:
             with trava: contas=carregar()
             runtime={}
@@ -261,7 +264,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.enviar(502,'Não foi possível concluir o login ou atualizar o proxy. Reinicie o gerenciador e tente novamente.')
     def do_POST(self):
         path=urllib.parse.urlsplit(self.path).path
-        if path not in ('/iniciar','/api/verificacao/iniciar','/api/importar-conta'): return self.enviar(404,'Não encontrado.')
+        if path not in ('/iniciar','/api/verificacao/iniciar','/api/importar-conta','/api/atualizacao/iniciar','/api/atualizacao/desligar'): return self.enviar(404,'Não encontrado.')
         if self.headers.get('Origin') not in (None,'null',f'http://127.0.0.1:{self.server.server_port}'):
             return self.enviar(403,'Não autorizado.')
         try: size=int(self.headers.get('Content-Length','0'))
@@ -270,6 +273,25 @@ class Handler(BaseHTTPRequestHandler):
         q=urllib.parse.parse_qs(self.rfile.read(size).decode('utf-8','replace'))
         if not hmac.compare_digest(q.get('chave',[''])[0],UI):
             return self.enviar(403,'Não autorizado.')
+        if path=='/api/atualizacao/desligar':
+            self.json(200,{'ok':True})
+            threading.Thread(target=self.server.shutdown,daemon=True).start()
+            return
+        if path=='/api/atualizacao/iniciar':
+            try:
+                runtime=json.loads((Path(__file__).resolve().parent/'runtime_proxy.json').read_text())
+                port=int(runtime['port'])
+                if not 1 <= port <= 65535: raise ValueError('Porta inválida.')
+                with urllib.request.urlopen(f'http://127.0.0.1:{port}/health',timeout=3) as response:
+                    health=json.load(response)
+                instance=runtime.get('instance','')
+                if health.get('provider')!='DeepAI' or not instance or not hmac.compare_digest(instance,health.get('instance','')):
+                    raise ValueError('Reinicie o proxy antes de atualizar.')
+                if not atualizador.iniciar(self.server.server_port,UI,port,instance):
+                    return self.json(409,{'error':'Atualização já está em andamento.'})
+                return self.json(202,{'ok':True})
+            except (OSError,ValueError,KeyError,TypeError):
+                return self.json(503,{'error':'Proxy indisponível. Reinicie-o antes de atualizar.'})
         if path=='/api/importar-conta':
             key=q.get('conta',[''])[0]
             import re

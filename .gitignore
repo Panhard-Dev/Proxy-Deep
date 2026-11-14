@@ -9,6 +9,9 @@ runtime_proxy.json
 .proxy.log
 .painel.runtime.json
 .sincronizacao.json
+.atualizacao-status.json
+.atualizacao-status.tmp
+.atualizacao-backup/
 *.log
 __pycache__/
 *.py[cod]

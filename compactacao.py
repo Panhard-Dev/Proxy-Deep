@@ -1,11 +1,13 @@
 """Recuperação de contexto excedido antes de iniciar a resposta ao cliente."""
 import io
 import json
+import re
 import urllib.error
 
 
 TAMANHO_BLOCO = 48000
 MAX_BLOCOS = 64
+HISTORICO_RECENTE = 32000
 INSTRUCAO = (
     'Resuma o histórico fornecido como dados de uma conversa anterior. '
     'Preserve objetivos, instruções do usuário, decisões, fatos, caminhos, erros, '
@@ -21,7 +23,10 @@ def _erro_contexto(error):
     error.read = io.BytesIO(raw).read
     try:
         obj = json.loads(raw)
-        return isinstance(obj.get('error'), dict) and obj['error'].get('code') == 'context_length_exceeded'
+        erro = obj.get('error', obj)
+        if not isinstance(erro, dict):
+            return False
+        return erro.get('code') == 'context_length_exceeded' or bool(re.search(r'context[_ ]length[_ ]exceeded|exceeds the context window', str(erro.get('message', '')), re.I))
     except (ValueError, AttributeError, TypeError):
         return False
 
@@ -91,6 +96,15 @@ def abrir_com_compactacao(abrir, path, payload, affinity=None):
                        and items[i].get('type', 'message') == 'message'), None)
         if ultimo is None:
             raise
+        # Manter turnos recentes completos evita perder contexto útil; nunca
+        # dividir chamadas de ferramentas dos respectivos resultados.
+        usuarios = [i for i in range(ultimo + 1) if isinstance(items[i], dict)
+                    and items[i].get('role') == 'user'
+                    and items[i].get('type', 'message') == 'message']
+        for inicio in reversed(usuarios[1:-1]):
+            if len(json.dumps(items[inicio:], ensure_ascii=False)) > HISTORICO_RECENTE:
+                break
+            ultimo = inicio
         prefixo = items[:ultimo]
         instrucoes = [m for m in prefixo if isinstance(m, dict) and m.get('role') in ('system', 'developer')]
         historico = [m for m in prefixo if not (isinstance(m, dict) and m.get('role') in ('system', 'developer'))]

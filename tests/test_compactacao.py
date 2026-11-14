@@ -80,6 +80,22 @@ class CompactacaoTests(unittest.TestCase):
                 compactacao.abrir_com_compactacao(lambda *a, **k: (_ for _ in ()).throw(erro()), '/chat/completions', request)
         resumo.assert_called_once()
 
+    def test_preserva_varios_turnos_recentes_e_reconhece_mensagem_do_provedor(self):
+        request = {'model': 'test', 'messages': [
+            {'role': 'user', 'content': 'antigo'}, {'role': 'assistant', 'content': 'primeira resposta'},
+            {'role': 'user', 'content': 'recente'}, {'role': 'assistant', 'content': 'segunda resposta'},
+            {'role': 'user', 'content': 'atual'}]}
+        calls = []
+        def abrir(path, body, affinity=None):
+            calls.append(json.loads(body))
+            if len(calls) == 1:
+                raise urllib.error.HTTPError('x', 400, '', {}, io.BytesIO(b'{"error":{"message":"This conversation exceeds the context window"}}'))
+            if len(calls) == 2:
+                return resposta({'choices': [{'finish_reason': 'stop', 'message': {'content': 'resumo'}}]})
+            return resposta({'ok': True})
+        compactacao.abrir_com_compactacao(abrir, '/chat/completions', request).close()
+        self.assertEqual(calls[-1]['messages'][-3:], request['messages'][-3:])
+
     def test_tres_protocolos_usam_mesmo_recuperador(self):
         handler = object.__new__(core.Gateway)
         handler.headers = {}

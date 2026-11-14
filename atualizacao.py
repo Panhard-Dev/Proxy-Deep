@@ -5,7 +5,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-VERSAO = '0.0.2'
+VERSAO = '0.0.3'
 RAIZ = Path(__file__).resolve().parent
 URL = 'https://api.github.com/repos/Panhard-Dev/Proxy-Deep/git/trees/main?recursive=1'
 _cache = None
