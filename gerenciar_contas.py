@@ -91,7 +91,7 @@ def consultar_saldo(index, conta, force=False):
     with saldo_lock:
         entry=saldo_cache.get(fingerprint)
         checkin=checkins.get(fingerprint)
-        if entry and entry[1]['status']=='check-in temporariamente bloqueado' and time.monotonic()-entry[0]<21600:
+        if entry and entry[1]['status']=='check-in temporariamente bloqueado' and time.monotonic()-entry[0]<300:
             return {'number':index+1, **entry[1]}
         if not force and entry and time.monotonic()-entry[0]<120:
             return {'number':index+1, **entry[1]}

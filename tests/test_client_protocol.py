@@ -47,6 +47,22 @@ class ClientProtocolTests(unittest.TestCase):
         self.assertTrue(second['desatualizado'])
         self.assertEqual(second['status'], 'check-in temporariamente bloqueado')
 
+    def test_refused_balance_is_rechecked_after_five_minutes(self):
+        error = urllib.error.HTTPError('https://example.invalid', 403, 'recusado', {}, io.BytesIO(b'{"error":{"code":"check_in_refused"}}'))
+        success = Reply(json.dumps({'balance':'42'}).encode())
+        painel.saldo_cache.clear(); painel.checkins.clear()
+        with patch('urllib.request.urlopen', side_effect=[error, success]) as request, patch.object(painel.contas_proxy, 'identificador_maquina', return_value='a'*64), patch.object(painel.protecao_proxy, 'reservar'), patch.object(painel.time, 'monotonic', return_value=1000) as clock:
+            first = painel.consultar_saldo(0, {'deepai_key':'test-key'}, True)
+            clock.return_value = 1299
+            blocked = painel.consultar_saldo(0, {'deepai_key':'test-key'}, True)
+            self.assertEqual(request.call_count, 1)
+            clock.return_value = 1301
+            recovered = painel.consultar_saldo(0, {'deepai_key':'test-key'}, True)
+        self.assertEqual(first['status'], 'check-in temporariamente bloqueado')
+        self.assertEqual(blocked['status'], 'check-in temporariamente bloqueado')
+        self.assertEqual(recovered['saldo'], '42')
+        self.assertEqual(request.call_count, 2)
+
     def test_affinity_only_for_valid_values(self):
         with patch.object(core.contas_proxy, 'abrir', return_value=None) as abrir:
             core.upstream_open('/models', affinity='session-123')
