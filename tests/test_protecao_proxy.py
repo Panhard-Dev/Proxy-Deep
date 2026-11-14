@@ -78,6 +78,21 @@ class ProtectionTests(unittest.TestCase):
         self.assertEqual(selected,['conta-a','conta-b'])
         self.assertGreaterEqual(protecao.situacao('conta-a')['espera'],299)
 
+    def test_local_rate_pause_rotates_to_next_account(self):
+        accounts = [{'deepai_key':'conta-a'}, {'deepai_key':'conta-b'}]
+        with patch.object(protecao.time, 'time', return_value=1000):
+            for _ in range(3): protecao.reservar('conta-a')
+            with patch.object(contas_proxy, 'carregar', return_value=accounts), patch.object(contas_proxy, 'identificador_maquina', return_value='a'*64), patch.object(contas_proxy._opener, 'open', return_value=io.BytesIO(b'ok')) as req:
+                result=contas_proxy.abrir('https://example.invalid/models',None,{},'instance')
+            self.assertEqual(result.read(),b'ok')
+            self.assertEqual(req.call_args.args[0].get_header('Api-key'), 'conta-b')
+
+    def test_longer_provider_retry_after_is_respected(self):
+        with patch.object(protecao.time, 'time', return_value=1000):
+            protecao.bloquear('conta-a', protecao.retry_after('600'))
+            with self.assertRaises(protecao.ContaLimitada) as caught: protecao.reservar('conta-a')
+        self.assertEqual(caught.exception.segundos, 600)
+
     def test_all_cooling_down_returns_429(self):
         accounts = [{'deepai_key':'conta-a'}, {'deepai_key':'conta-b'}]
         for c in accounts: protecao.bloquear(c['deepai_key'])
