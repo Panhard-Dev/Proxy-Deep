@@ -12,10 +12,16 @@ import uso_proxy
 from pathlib import Path
 
 ARQUIVO = Path(__file__).resolve().parent / 'contas.json'
+LANE_VERSION = '6'
 ARQUIVO_MAQUINA = ARQUIVO.with_name('.machine-id')
 _lock = threading.Lock()
 _proxima = 0
 _bloqueadas = {}
+
+class SemRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs): return None
+
+_opener = urllib.request.build_opener(SemRedirect())
 
 def identificador_maquina():
     try:
@@ -70,12 +76,12 @@ def abrir(url, body, extra_headers, instance, timeout=930):
     ultimo = None
     for i in ordem:
         conta = contas[i]
-        headers = {'X-DeepAI-Code-Theos': '4', 'X-DeepAI-Code-Instance': instance,
+        headers = {'X-DeepAI-Code-Theos': LANE_VERSION, 'X-DeepAI-Code-Instance': instance,
                    'X-DeepAI-Code-Machine': identificador_maquina(),
                    'Api-Key': conta['deepai_key'], **extra_headers}
         req = urllib.request.Request(url, data=body, headers=headers, method='POST' if body is not None else 'GET')
         try:
-            resposta = urllib.request.urlopen(req, timeout=timeout)
+            resposta = _opener.open(req, timeout=timeout)
             if not monitorar: return resposta
             stream = 'text/event-stream' in resposta.headers.get('Content-Type', '').lower()
             return uso_proxy.Monitor(resposta, payload.get('model','desconhecido'), urllib.parse.urlsplit(url).path, i + 1, inicio_chamada, stream, payload)

@@ -5,6 +5,7 @@ import base64
 import copy
 import json
 import os
+import re
 import secrets
 import socket
 import sys
@@ -29,8 +30,10 @@ _CATALOG_AT = 0.0
 _CATALOG_LOCK = threading.Lock()
 
 
-def upstream_open(path, body=None, timeout=930):
+def upstream_open(path, body=None, timeout=930, affinity=None):
     headers = {'Accept-Encoding': 'identity'}
+    if isinstance(affinity, str) and re.fullmatch(r'[A-Za-z0-9._:-]{1,256}', affinity):
+        headers['X-Session-Affinity'] = affinity
     if body is not None:
         headers['Content-Type'] = 'application/json'
     return contas_proxy.abrir(BASE + path, body, headers, INSTANCE, timeout)
@@ -66,7 +69,9 @@ def public_model(model):
         "reasoning": reasoning,
         "vision": "image" in inputs,
         "streaming": True,
-        "reasoning_efforts": ["off", "minimal", "low", "medium", "high"] if reasoning else [],
+        "reasoning_efforts": (["off", "minimal", "low", "medium", "high"]
+                              + (["xhigh"] if model.get('id') == 'muse-ember' else [])
+                              + (["max"] if model.get('id') in ('muse-ember', 'deepai-cyber') else [])) if reasoning else [],
         "capabilities": {
             "text": True,
             "vision": "image" in inputs,
@@ -75,8 +80,9 @@ def public_model(model):
             "tools": True,
         },
         "input": list(inputs),
-        "premier": bool(model.get("premier")),
     }
+    if isinstance(model.get('premier'), bool):
+        result['premier'] = model['premier']
     if "api" in model:
         result["api"] = model["api"]
     if "theosPerRequest" in model:
@@ -108,8 +114,6 @@ def normalize_stream_event(event, requested_model=None):
     event = copy.deepcopy(event)
     if requested_model:
         event["model"] = requested_model
-    event.pop("provider", None)
-    event.pop("service_tier", None)
     for choice in event.get("choices") or []:
         if not isinstance(choice, dict):
             continue
@@ -118,7 +122,6 @@ def normalize_stream_event(event, requested_model=None):
             continue
         if isinstance(delta.get("reasoning"), str) and not delta.get("reasoning_content"):
             delta["reasoning_content"] = delta["reasoning"]
-        delta.pop("reasoning_details", None)
     return event
 
 
@@ -201,10 +204,12 @@ class Gateway(BaseHTTPRequestHandler):
     def proxy_chat(self, payload):
         payload = normalize_chat_payload(payload)
         payload.setdefault('stream', False)
+        if isinstance(payload.get('messages'), list):
+            payload['messages'] = [dict(m, role='system') if isinstance(m, dict) and m.get('role') == 'developer' else m for m in payload['messages']]
         requested_model = payload["model"]
         body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         try:
-            upstream = upstream_open("/chat/completions", body)
+            upstream = upstream_open("/chat/completions", body, affinity=self.headers.get('X-Session-Affinity'))
         except urllib.error.HTTPError as error:
             return self.upstream_error(error)
         with upstream:
@@ -242,20 +247,19 @@ class Gateway(BaseHTTPRequestHandler):
                             line = b"data: " + json.dumps(event, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n"
                         except (ValueError, UnicodeDecodeError):
                             pass
-                elif line.startswith(b":"):
-                    continue
                 self.wfile.write(line)
                 self.wfile.flush()
 
     def proxy_responses(self, payload):
         payload = normalize_chat_payload(payload)
         requested_model = payload["model"]
-        if requested_model != "gpt-6-astra":
+        model = self.model_by_id(requested_model)
+        if not model or model.get('api') != 'openai-responses':
             response_request = copy.deepcopy(payload)
             chat_payload, custom = responses_bridge.translate(payload)
             body = json.dumps(chat_payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
             try:
-                upstream = upstream_open("/chat/completions", body)
+                upstream = upstream_open("/chat/completions", body, affinity=self.headers.get('X-Session-Affinity'))
             except urllib.error.HTTPError as error:
                 return self.upstream_error(error)
             with upstream:
@@ -265,7 +269,7 @@ class Gateway(BaseHTTPRequestHandler):
             return
         body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         try:
-            upstream = upstream_open("/responses", body)
+            upstream = upstream_open("/responses", body, affinity=self.headers.get('X-Session-Affinity'))
         except urllib.error.HTTPError as error:
             return self.upstream_error(error)
         with upstream:
@@ -289,7 +293,7 @@ class Gateway(BaseHTTPRequestHandler):
         payload = normalize_chat_payload(payload)
         request = anthropic_bridge.translate(payload)
         body = json.dumps(request, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
-        with upstream_open('/chat/completions', body) as upstream:
+        with upstream_open('/chat/completions', body, affinity=self.headers.get('X-Session-Affinity')) as upstream:
             anthropic_bridge.relay(self, upstream, payload)
 
     def handle_request(self):

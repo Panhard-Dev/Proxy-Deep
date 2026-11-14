@@ -155,6 +155,9 @@ def _relay(handler, upstream, request, custom, content_filter=None, reasoning_fi
         handler._bridge_started=True
     event('response.created',response=response('in_progress')); event('response.in_progress',response=response('in_progress'))
     for line in upstream:
+        if line.startswith(b':') and streaming:
+            handler.wfile.write(line + b'\n'); handler.wfile.flush()
+            continue
         if not line.startswith(b'data:'): continue
         raw=line[5:].strip()
         if raw==b'[DONE]': ended=True; break

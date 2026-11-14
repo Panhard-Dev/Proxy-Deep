@@ -12,6 +12,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 BASE="https://api.deepai.org/deepai_code"
 UI=os.environ.get('DEEPAI_PAINEL_TOKEN') or secrets.token_urlsafe(32)
+INSTANCE=secrets.token_hex(16)
 trava=threading.Lock()
 
 def localizar_navegador():
@@ -78,6 +79,8 @@ def ciclo_sincronizacao():
         time.sleep(120)
 
 saldo_cache={}
+checkins={}
+inicio_processo=time.monotonic()
 saldo_lock=threading.Lock()
 def consultar_saldo(index, conta, force=False):
     # Cache por credencial sem enviar ou mostrar a chave ao navegador.
@@ -85,16 +88,27 @@ def consultar_saldo(index, conta, force=False):
     fingerprint=hashlib.sha256(conta['deepai_key'].encode()).hexdigest()
     with saldo_lock:
         entry=saldo_cache.get(fingerprint)
+        checkin=checkins.get(fingerprint)
+        if entry and entry[1]['status']=='check-in temporariamente bloqueado' and time.monotonic()-entry[0]<21600:
+            return {'number':index+1, **entry[1]}
         if not force and entry and time.monotonic()-entry[0]<120:
             return {'number':index+1, **entry[1]}
-    headers={'Api-Key':conta['deepai_key'],'X-DeepAI-Code-Theos':'4',
-             'X-DeepAI-Code-Instance':UI[:24],
-             'X-DeepAI-Code-Machine':contas_proxy.identificador_maquina()}
+    headers={'Api-Key':conta['deepai_key'],'X-DeepAI-Code-Theos':contas_proxy.LANE_VERSION,
+             'X-DeepAI-Code-Instance':INSTANCE,
+             'X-DeepAI-Code-Machine':contas_proxy.identificador_maquina(),
+             'X-DeepAI-Code-Beacon':f'v=0.3.37;up={int(time.monotonic()-inicio_processo)};pi=0'}
+    if checkin: headers['X-DeepAI-Code-Check-In']=checkin
+    def guardar_checkin(payload):
+        import re
+        info=payload.get('check_in') if isinstance(payload,dict) else None
+        if isinstance(info,dict) and isinstance(info.get('nonce'),str) and re.fullmatch(r'[0-9a-f]{32}',info['nonce']) and isinstance(info.get('seconds'),(int,float)) and info['seconds']>0:
+            with saldo_lock: checkins[fingerprint]=info['nonce']
     value={'status':'indisponível','saldo':None,'concessao':None,'renova':None}
     try:
         req=urllib.request.Request(BASE+'/theos',headers=headers)
         with urllib.request.urlopen(req,timeout=12) as response:
             payload=json.load(response)
+        guardar_checkin(payload)
         def numero(x):
             from decimal import Decimal, InvalidOperation
             try:
@@ -109,10 +123,11 @@ def consultar_saldo(index, conta, force=False):
         codigo=''
         try:
             erro=json.loads(e.read(8192))
+            guardar_checkin(erro)
             if isinstance(erro,dict) and isinstance(erro.get('error'),dict):
                 codigo=erro['error'].get('code','')
         except (OSError,ValueError,TypeError): pass
-        value['status']='limite' if e.code==429 else 'falha de autenticação' if e.code in (401,403) and codigo!='check_in_refused' else 'indisponível'
+        value['status']='check-in temporariamente bloqueado' if codigo=='check_in_refused' else 'login Google ou Apple necessário' if codigo=='social_login_required' else 'limite' if e.code==429 else 'falha de autenticação' if e.code in (401,403) else 'indisponível'
     except (OSError, ValueError, TypeError):pass
     with saldo_lock:saldo_cache[fingerprint]=(time.monotonic(),value)
     return {'number':index+1, **value}

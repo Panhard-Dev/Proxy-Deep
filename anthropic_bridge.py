@@ -78,6 +78,9 @@ def relay(handler, upstream, payload):
     event('message_start', message=message)
     text_index = None
     for line in upstream:
+        if line.startswith(b':') and streaming:
+            handler.wfile.write(line + b'\n'); handler.wfile.flush()
+            continue
         if not line.startswith(b'data:'): continue
         raw = line[5:].strip()
         if not raw or raw == b'[DONE]': continue
