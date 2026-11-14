@@ -88,15 +88,17 @@ def consultar_saldo(index, conta, force=False):
     # Cache por credencial sem enviar ou mostrar a chave ao navegador.
     import hashlib
     fingerprint=hashlib.sha256(conta['deepai_key'].encode()).hexdigest()
+    instancia=contas_proxy.identificador_instancia(INSTANCE)
     with saldo_lock:
         entry=saldo_cache.get(fingerprint)
-        checkin=checkins.get(fingerprint)
+        registro=checkins.get(fingerprint)
+        checkin=registro[1] if registro and registro[0]==instancia else None
         if entry and entry[1]['status']=='check-in temporariamente bloqueado' and time.monotonic()-entry[0]<300:
             return {'number':index+1, **entry[1]}
         if not force and entry and time.monotonic()-entry[0]<120:
             return {'number':index+1, **entry[1]}
     headers={'Api-Key':conta['deepai_key'],'X-DeepAI-Code-Theos':contas_proxy.LANE_VERSION,
-             'X-DeepAI-Code-Instance':INSTANCE,
+             'X-DeepAI-Code-Instance':instancia,
              'X-DeepAI-Code-Machine':contas_proxy.identificador_maquina(),
              'X-DeepAI-Code-Beacon':f'v=0.3.37;up={int(time.monotonic()-inicio_processo)};pi=0'}
     if checkin: headers['X-DeepAI-Code-Check-In']=checkin
@@ -104,7 +106,7 @@ def consultar_saldo(index, conta, force=False):
         import re
         info=payload.get('check_in') if isinstance(payload,dict) else None
         if isinstance(info,dict) and isinstance(info.get('nonce'),str) and re.fullmatch(r'[0-9a-f]{32}',info['nonce']) and isinstance(info.get('seconds'),(int,float)) and info['seconds']>0:
-            with saldo_lock: checkins[fingerprint]=info['nonce']
+            with saldo_lock: checkins[fingerprint]=(instancia,info['nonce'])
     value={'status':'indisponível','saldo':None,'concessao':None,'renova':None}
     try:
         protecao_proxy.reservar(conta['deepai_key'])

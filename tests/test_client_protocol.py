@@ -1,6 +1,8 @@
 import io
 import json
+import tempfile
 import urllib.error
+from pathlib import Path
 import unittest
 from unittest.mock import patch
 
@@ -62,6 +64,26 @@ class ClientProtocolTests(unittest.TestCase):
         self.assertEqual(blocked['status'], 'check-in temporariamente bloqueado')
         self.assertEqual(recovered['saldo'], '42')
         self.assertEqual(request.call_count, 2)
+
+    def test_balance_uses_proxy_instance_and_drops_old_nonce_after_restart(self):
+        body = json.dumps({'balance':'1','check_in':{'nonce':'b'*32,'seconds':600}}).encode()
+        requests = []
+        def open_request(req, timeout):
+            requests.append(req)
+            return Reply(body)
+        painel.saldo_cache.clear(); painel.checkins.clear()
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory); runtime=root/'runtime_proxy.json'
+            runtime.write_text(json.dumps({'instance':'1'*32}))
+            with patch.object(painel.contas_proxy,'ARQUIVO',root/'contas.json'), patch('urllib.request.urlopen',side_effect=open_request), patch.object(painel.contas_proxy,'identificador_maquina',return_value='a'*64), patch.object(painel.protecao_proxy,'reservar'):
+                painel.consultar_saldo(0,{'deepai_key':'test-key'},True)
+                painel.consultar_saldo(0,{'deepai_key':'test-key'},True)
+                runtime.write_text(json.dumps({'instance':'2'*32}))
+                painel.consultar_saldo(0,{'deepai_key':'test-key'},True)
+        self.assertEqual(requests[0].get_header('X-deepai-code-instance'),'1'*32)
+        self.assertEqual(requests[1].get_header('X-deepai-code-check-in'),'b'*32)
+        self.assertEqual(requests[2].get_header('X-deepai-code-instance'),'2'*32)
+        self.assertIsNone(requests[2].get_header('X-deepai-code-check-in'))
 
     def test_affinity_only_for_valid_values(self):
         with patch.object(core.contas_proxy, 'abrir', return_value=None) as abrir:

@@ -346,7 +346,7 @@ def serve(port):
     actual = server.server_port
     runtime = Path(__file__).resolve().parent / 'runtime_proxy.json'
     try:
-        runtime.write_text(json.dumps({'pid':os.getpid(),'port':actual}), encoding='utf-8')
+        runtime.write_text(json.dumps({'pid':os.getpid(),'port':actual,'instance':INSTANCE}), encoding='utf-8')
         try: os.chmod(runtime, 0o600)
         except OSError: pass
     except OSError: pass

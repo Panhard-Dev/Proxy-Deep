@@ -42,6 +42,15 @@ def identificador_maquina():
         time.sleep(.02)
     raise ValueError('Identificador de máquina inválido.')
 
+def identificador_instancia(padrao):
+    """Usa no painel a mesma instância que envia requisições ao modelo."""
+    try:
+        data = json.loads(ARQUIVO.with_name('runtime_proxy.json').read_text(encoding='utf-8'))
+        instancia = data.get('instance')
+        if isinstance(instancia, str) and re.fullmatch(r'[a-f0-9]{32}', instancia): return instancia
+    except (OSError, ValueError, TypeError, AttributeError): pass
+    return padrao
+
 def carregar():
     if not ARQUIVO.exists(): return []
     with ARQUIVO.open(encoding='utf-8') as arquivo:
