@@ -23,6 +23,7 @@ import anthropic_bridge
 import contas_proxy
 import cadencia_stream
 import compactacao
+import atualizacao
 
 BASE = "https://api.deepai.org/deepai_code"
 INSTANCE = secrets.token_hex(16)
@@ -310,7 +311,7 @@ class Gateway(BaseHTTPRequestHandler):
         path = urllib.parse.urlsplit(self.path).path.rstrip("/") or "/"
         try:
             if self.command == "GET" and path == "/health":
-                return self.write_json(200, {"status": "ok", "provider": "DeepAI", "version": "1.0"})
+                return self.write_json(200, {"status": "ok", "provider": "DeepAI", "version": atualizacao.VERSAO})
             if self.command == "GET" and path == "/v1":
                 return self.write_json(200, {"object": "api", "provider": "DeepAI", "models": "/v1/models"})
             if self.command == "GET" and path == "/v1/models":
