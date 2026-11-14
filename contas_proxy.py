@@ -1,14 +1,18 @@
 """Armazenamento local e seleção de contas do proxy."""
 import json
+import io
+import math
 import os
 import re
 import secrets
+import sqlite3
 import threading
 import time
 import urllib.error
 import urllib.request
 import urllib.parse
 import uso_proxy
+import protecao_proxy
 from pathlib import Path
 
 ARQUIVO = Path(__file__).resolve().parent / 'contas.json'
@@ -71,11 +75,26 @@ def abrir(url, body, extra_headers, instance, timeout=930):
         inicio = _proxima % len(contas)
         _proxima = (_proxima + 1) % len(contas)
         ordem = list(range(inicio, len(contas))) + list(range(inicio))
-        ativos = [i for i in ordem if _bloqueadas.get(contas[i]['deepai_key'], 0) <= time.monotonic()]
-        ordem = ativos or ordem[:1]
+        agora = time.monotonic()
+        ativos = [i for i in ordem if _bloqueadas.get(contas[i]['deepai_key'], 0) <= agora]
+        espera_local = min((_bloqueadas.get(contas[i]['deepai_key'], 0) - agora for i in ordem), default=1)
+        ordem = ativos
     ultimo = None
+    esperas = []
+    if not ordem:
+        segundos = max(1, math.ceil(espera_local))
+        corpo = json.dumps({'error': {'code': 'temporarily_unavailable', 'message': 'Contas temporariamente indisponíveis.'}}).encode()
+        raise urllib.error.HTTPError(url, 503, 'Contas temporariamente indisponíveis', {'Retry-After':str(segundos)}, io.BytesIO(corpo))
     for i in ordem:
         conta = contas[i]
+        try:
+            protecao_proxy.reservar(conta['deepai_key'])
+        except protecao_proxy.ContaLimitada as limite:
+            esperas.append(limite.segundos)
+            continue
+        except (OSError, sqlite3.Error) as erro:
+            corpo = json.dumps({'error': {'code': 'rate_guard_unavailable', 'message': 'Não foi possível verificar o limite local de requisições.'}}).encode()
+            raise urllib.error.HTTPError(url, 503, 'Proteção de tráfego indisponível', {'Retry-After':'5'}, io.BytesIO(corpo)) from erro
         headers = {'X-DeepAI-Code-Theos': LANE_VERSION, 'X-DeepAI-Code-Instance': instance,
                    'X-DeepAI-Code-Machine': identificador_maquina(),
                    'Api-Key': conta['deepai_key'], **extra_headers}
@@ -89,12 +108,26 @@ def abrir(url, body, extra_headers, instance, timeout=930):
             if erro.code not in (401, 403, 429):
                 if monitorar: uso_proxy.registrar(payload.get('model','desconhecido'), urllib.parse.urlsplit(url).path, i+1, erro.code, inicio_chamada, streaming=bool(payload.get('stream')))
                 raise
-            try: segundos = min(3600, max(30, int(erro.headers.get('Retry-After', '60'))))
-            except (ValueError, TypeError): segundos = 60
-            with _lock: _bloqueadas[conta['deepai_key']] = time.monotonic() + segundos
+            if erro.code == 429:
+                segundos = max(protecao_proxy.ESPERA, protecao_proxy.retry_after(erro.headers.get('Retry-After'), padrao=protecao_proxy.ESPERA))
+                try:
+                    protecao_proxy.bloquear(conta['deepai_key'], segundos)
+                except (OSError, sqlite3.Error) as falha:
+                    corpo = json.dumps({'error': {'code': 'rate_guard_unavailable', 'message': 'Não foi possível registrar a pausa da conta.'}}).encode()
+                    raise urllib.error.HTTPError(url, 503, 'Proteção de tráfego indisponível', {'Retry-After':'5'}, io.BytesIO(corpo)) from falha
+                esperas.append(segundos)
+            else:
+                segundos = protecao_proxy.retry_after(erro.headers.get('Retry-After'), padrao=60)
+                with _lock: _bloqueadas[conta['deepai_key']] = time.monotonic() + segundos
             if ultimo: ultimo.close()
             ultimo = erro
     if ultimo:
+        if ultimo.code == 429 and esperas:
+            ultimo.headers['Retry-After'] = str(min(esperas))
         if monitorar: uso_proxy.registrar(payload.get('model','desconhecido'), urllib.parse.urlsplit(url).path, None, ultimo.code, inicio_chamada, streaming=bool(payload.get('stream')))
         raise ultimo
+    if esperas:
+        segundos = min(esperas)
+        corpo = json.dumps({'error': {'code': 'rate_limited', 'message': 'Todas as contas estão em espera pelo limite de requisições.'}}).encode()
+        raise urllib.error.HTTPError(url, 429, 'Contas em espera', {'Retry-After': str(segundos)}, io.BytesIO(corpo))
     raise OSError('Nenhuma conta disponível')

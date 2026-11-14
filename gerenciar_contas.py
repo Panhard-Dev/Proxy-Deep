@@ -3,11 +3,13 @@ import ast, html, hmac, json, os, secrets, shutil, subprocess, sys, tempfile, th
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import contas_proxy
+import protecao_proxy
 import uso_proxy
 import sincronizar_contas
 import proxy
 import iniciar
 import socket
+import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor
 BASE="https://api.deepai.org/deepai_code"
@@ -105,6 +107,7 @@ def consultar_saldo(index, conta, force=False):
             with saldo_lock: checkins[fingerprint]=info['nonce']
     value={'status':'indisponível','saldo':None,'concessao':None,'renova':None}
     try:
+        protecao_proxy.reservar(conta['deepai_key'])
         req=urllib.request.Request(BASE+'/theos',headers=headers)
         with urllib.request.urlopen(req,timeout=12) as response:
             payload=json.load(response)
@@ -113,12 +116,14 @@ def consultar_saldo(index, conta, force=False):
             from decimal import Decimal, InvalidOperation
             try:
                 n=Decimal(str(x))
-                if not n.is_finite() or n<0 or n>1000000000:return None
+                if not n.is_finite() or n < -1000000000 or n > 1000000000:return None
                 return str(n)
             except (InvalidOperation, ValueError, TypeError):return None
         value={'status':'conectada','saldo':numero(payload.get('balance')),
                'concessao':numero(payload.get('granted')),
                'renova':str(payload.get('refresh_at') or '')[:64]}
+    except protecao_proxy.ContaLimitada:
+        value['status']='limite'
     except urllib.error.HTTPError as e:
         codigo=''
         try:
@@ -127,8 +132,17 @@ def consultar_saldo(index, conta, force=False):
             if isinstance(erro,dict) and isinstance(erro.get('error'),dict):
                 codigo=erro['error'].get('code','')
         except (OSError,ValueError,TypeError): pass
+        if e.code==429:
+            try:
+                segundos=max(protecao_proxy.ESPERA,protecao_proxy.retry_after(e.headers.get('Retry-After'),padrao=protecao_proxy.ESPERA))
+                protecao_proxy.bloquear(conta['deepai_key'],segundos)
+            except (OSError,sqlite3.Error): pass
         value['status']='check-in temporariamente bloqueado' if codigo=='check_in_refused' else 'login Google ou Apple necessário' if codigo=='social_login_required' else 'limite' if e.code==429 else 'falha de autenticação' if e.code in (401,403) else 'indisponível'
-    except (OSError, ValueError, TypeError):pass
+    except (OSError, ValueError, TypeError, sqlite3.Error):pass
+    if value.get('saldo') is None and entry and entry[1].get('saldo') is not None:
+        anterior=entry[1]
+        value.update(saldo=anterior['saldo'], concessao=anterior.get('concessao'),
+                     renova=anterior.get('renova'), desatualizado=True)
     with saldo_lock:saldo_cache[fingerprint]=(time.monotonic(),value)
     return {'number':index+1, **value}
 
@@ -203,6 +217,9 @@ class Handler(BaseHTTPRequestHandler):
             with trava: contas=carregar()
             with ThreadPoolExecutor(max_workers=min(6,max(1,len(contas)))) as executor:
                 rows=list(executor.map(lambda item:consultar_saldo(*item,force=q.get('forcar',[''])[0]=='1'),enumerate(contas)))
+            for row, conta in zip(rows, contas):
+                try: row['protecao']=protecao_proxy.situacao(conta['deepai_key'])
+                except (OSError,sqlite3.Error): row['protecao']=None
             return self.json(200,{'accounts':rows})
         if u.path=='/api/modelos' and autorizado:
             if not carregar(): return self.json(200,{'models':[],'message':'Adicione uma conta para carregar os modelos.'})
