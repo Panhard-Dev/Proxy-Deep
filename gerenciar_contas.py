@@ -193,6 +193,9 @@ class Handler(BaseHTTPRequestHandler):
             if estado.get('panel'):
                 estado['panel']=f'http://127.0.0.1:{self.server.server_port}/painel?chave={UI}'
             return self.json(200,estado)
+        if u.path=='/api/login/estado' and autorizado:
+            with trava: estado=getattr(self.server,'resultado_login','aguardando')
+            return self.json(200,{'status':estado})
         if u.path=='/api/painel' and autorizado:
             with trava: contas=carregar()
             runtime={}
@@ -235,9 +238,12 @@ class Handler(BaseHTTPRequestHandler):
                     nova={campo:key}
                     contas.append(nova)
                 salvar(contas)
+                self.server.resultado_login='duplicada' if duplicada else 'concluido'
             titulo='Conta já adicionada.' if duplicada else 'Conta adicionada.'
             return self.enviar(200,'<!doctype html><meta charset="utf-8"><h2>'+titulo+'</h2><p>Conta disponível no proxy imediatamente.</p><p>Para adicionar outra conta, volte ao gerenciador e entre com outra conta no navegador.</p><a href="/?chave='+UI+'">Voltar ao gerenciador</a>')
-        except (OSError,ValueError,KeyError,RuntimeError,subprocess.TimeoutExpired): return self.enviar(502,'Não foi possível concluir o login ou atualizar o proxy. Reinicie o gerenciador e tente novamente.')
+        except (OSError,ValueError,KeyError,RuntimeError,subprocess.TimeoutExpired):
+            with trava: self.server.resultado_login='erro'
+            return self.enviar(502,'Não foi possível concluir o login ou atualizar o proxy. Reinicie o gerenciador e tente novamente.')
     def do_POST(self):
         path=urllib.parse.urlsplit(self.path).path
         if path not in ('/iniciar','/api/verificacao/iniciar','/api/importar-conta','/api/cofre/ativar'): return self.enviar(404,'Não encontrado.')
@@ -273,6 +279,7 @@ class Handler(BaseHTTPRequestHandler):
         base=BASE.removesuffix('/deepai_code')
         with trava:
             self.server.estado_login=secrets.token_hex(32)
+            self.server.resultado_login='aguardando'
             estado=self.server.estado_login
         destino=base+'/deepai_code/desktop_auth/?'+urllib.parse.urlencode({'state':estado,'port':self.server.server_port})
         try:
