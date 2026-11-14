@@ -21,3 +21,9 @@ sync-cloudflare/.link-staging
 
 # Build de publicação não é necessário para executar o proxy
 sync-cloudflare/worker-app/
+
+# Ferramentas privadas locais
+receber_contas.py
+Receber Contas.bat
+Receber Contas.sh
+painel_privado.py

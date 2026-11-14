@@ -62,28 +62,6 @@ def salvar(contas):
 
 sync_lock=threading.Lock()
 sync_state={'status':'não configurada','mensagem':'Sincronização não configurada.'}
-cofre_lock=threading.Lock()
-senha_cofre=None
-def importar_cofre(senha):
-    remotas=sincronizar_contas.recuperar(senha)
-    with trava:
-        contas=carregar()
-        novas=0
-        for conta in remotas:
-            if not any(hmac.compare_digest(c['deepai_key'],conta['deepai_key']) for c in contas):
-                contas.append(conta)
-                novas+=1
-        if novas: contas_proxy.salvar(contas)
-    return novas
-
-def ciclo_recebimento():
-    while True:
-        time.sleep(120)
-        with cofre_lock: senha=senha_cofre
-        if senha:
-            try: importar_cofre(senha)
-            except (OSError,ValueError,KeyError): pass
-
 def sincronizar_em_fundo():
     global sync_state
     with sync_lock:
@@ -246,7 +224,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.enviar(502,'Não foi possível concluir o login ou atualizar o proxy. Reinicie o gerenciador e tente novamente.')
     def do_POST(self):
         path=urllib.parse.urlsplit(self.path).path
-        if path not in ('/iniciar','/api/verificacao/iniciar','/api/importar-conta','/api/cofre/ativar'): return self.enviar(404,'Não encontrado.')
+        if path not in ('/iniciar','/api/verificacao/iniciar','/api/importar-conta'): return self.enviar(404,'Não encontrado.')
         if self.headers.get('Origin') not in (None,'null',f'http://127.0.0.1:{self.server.server_port}'):
             return self.enviar(403,'Não autorizado.')
         try: size=int(self.headers.get('Content-Length','0'))
@@ -255,14 +233,6 @@ class Handler(BaseHTTPRequestHandler):
         q=urllib.parse.parse_qs(self.rfile.read(size).decode('utf-8','replace'))
         if not hmac.compare_digest(q.get('chave',[''])[0],UI):
             return self.enviar(403,'Não autorizado.')
-        if path=='/api/cofre/ativar':
-            senha=q.get('senha',[''])[0]
-            if not senha or len(senha)>512: return self.json(400,{'error':'Informe a senha do cofre.'})
-            try: novas=importar_cofre(senha)
-            except (OSError,ValueError,KeyError): return self.json(502,{'error':'Não foi possível abrir o cofre. Confira a senha e a conexão.'})
-            global senha_cofre
-            with cofre_lock: senha_cofre=senha
-            return self.json(200,{'message':f'Recebimento automático ativo. {novas} conta(s) adicionada(s).'})
         if path=='/api/importar-conta':
             key=q.get('conta',[''])[0]
             import re
@@ -291,7 +261,6 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     threading.Thread(target=ciclo_sincronizacao,daemon=True).start()
-    threading.Thread(target=ciclo_recebimento,daemon=True).start()
     port=int(os.environ.get('DEEPAI_PAINEL_PORTA','0'))
     servidor=ThreadingHTTPServer(('127.0.0.1',port),Handler)
     url=f'http://127.0.0.1:{servidor.server_port}/?chave={UI}'
