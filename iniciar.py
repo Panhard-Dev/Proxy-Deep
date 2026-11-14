@@ -15,6 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
+PORTA_PADRAO = 8791
 TOKEN = secrets.token_urlsafe(32)
 STEPS = [{'name': n, 'status': 'pending', 'detail': 'Aguardando'} for n in (
     'Python e arquivos do aplicativo', 'Bibliotecas necessárias',
@@ -31,6 +32,10 @@ def private_file(path, mode='w'):
 
 def child_env():
     return os.environ.copy()
+
+def porta_proxy():
+    porta = os.environ.get('DEEP_PORT', str(PORTA_PADRAO))
+    return porta if porta.isdigit() and 1 <= int(porta) <= 65535 else str(PORTA_PADRAO)
 
 def ensure_dependencies():
     import ssl, sqlite3
@@ -95,8 +100,7 @@ def prepare():
             update(3,'warning','Sincronização indisponível. O painel tentará novamente automaticamente.')
         stage=4;update(4,'running','Iniciando serviços locais...')
         if not existing_proxy():
-            port=os.environ.get('DEEP_PORT','0')
-            if not port.isdigit() or not 0<=int(port)<=65535: port='0'
+            port=porta_proxy()
             proc=start(['proxy.py','serve','--porta',port],'.proxy.log',{'DEEPAI_PROXY_INTERNAL':'1'})
             for _ in range(100):
                 if existing_proxy(): break

@@ -367,7 +367,7 @@ def main():
         sys.exit("Use o inicializador incluído nesta pasta.")
     parser = argparse.ArgumentParser()
     parser.add_argument("acao", nargs="?", default="serve", choices=["serve"])
-    parser.add_argument("--porta", type=int, default=0)
+    parser.add_argument("--porta", type=int, default=8791)
     args = parser.parse_args()
     if not 0 <= args.porta <= 65535:
         parser.error("porta deve estar entre 0 e 65535")

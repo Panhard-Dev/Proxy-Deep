@@ -30,6 +30,8 @@ Baixe ou clone o repositório e abra a pasta do projeto.
 
 O inicializador verifica o ambiente, prepara os arquivos locais e abre o painel no navegador. Para iniciar o login temporário, é necessário Microsoft Edge, Brave, Google Chrome ou Chromium. A URL do proxy aparece na página inicial, em **Conexões**.
 
+A URL padrão da API é `http://127.0.0.1:8791/v1` e permanece igual após reiniciar. Se a porta estiver ocupada, encerre o programa que a utiliza ou defina outra porta fixa na variável de ambiente `DEEP_PORT`.
+
 Para adicionar uma conta, clique em **Adicionar conta** no painel e conclua o login na janela aberta.
 
 ## Diagnóstico
