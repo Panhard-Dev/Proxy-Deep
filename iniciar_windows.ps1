@@ -1,7 +1,9 @@
+param([switch]$ReceberContas)
 # Iniciador para Windows: usa Python existente ou baixa o pacote oficial isolado.
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $root = $PSScriptRoot
+$scriptName = if ($ReceberContas) { 'receber_contas.py' } else { 'iniciar.py' }
 Set-Location -LiteralPath $root
 try {
     if (-not (Test-Path -LiteralPath (Join-Path $root 'iniciar.py'))) {
@@ -11,7 +13,7 @@ try {
     if ($launcher) {
         & $launcher.Source -3 -c 'import sys,ssl,sqlite3; assert sys.version_info >= (3,9)' 2>$null
         if ($LASTEXITCODE -eq 0) {
-            & $launcher.Source -3 (Join-Path $root 'iniciar.py') @args
+            & $launcher.Source -3 (Join-Path $root $scriptName) @args
             exit $LASTEXITCODE
         }
     }
@@ -19,7 +21,7 @@ try {
     if ($installed -and $installed.Source -notmatch '[\\/]WindowsApps[\\/]') {
         & $installed.Source -c 'import sys,ssl,sqlite3; assert sys.version_info >= (3,9)' 2>$null
         if ($LASTEXITCODE -eq 0) {
-            & $installed.Source (Join-Path $root 'iniciar.py') @args
+            & $installed.Source (Join-Path $root $scriptName) @args
             exit $LASTEXITCODE
         }
     }
@@ -56,7 +58,7 @@ try {
     if (-not (Test-Path -LiteralPath $python)) { throw 'Não foi possível preparar o Python isolado.' }
     [System.IO.File]::WriteAllText($pth,"python313.zip`r`n.`r`n$root`r`nimport site`r`n",[System.Text.UTF8Encoding]::new($false))
     Write-Host 'Iniciando verificações. Uma página abrirá no navegador...'
-    & $python (Join-Path $root 'iniciar.py') @args
+    & $python (Join-Path $root $scriptName) @args
     if ($LASTEXITCODE -ne 0) { throw 'Não foi possível iniciar o aplicativo.' }
 } catch {
     Write-Host ''

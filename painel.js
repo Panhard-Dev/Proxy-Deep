@@ -31,3 +31,5 @@ $('#add-account').addEventListener('click',async()=>{try{let r=await fetch('/ini
 $('#login-close').addEventListener('click',()=>{$('#login-panel').hidden=true});
 $('#login-copy').addEventListener('click',async()=>{let input=$('#login-link');if(!input.value)return;try{await navigator.clipboard.writeText(input.value);notice('Link de login copiado.')}catch(e){input.focus();input.select();notice('Selecione e copie o link de login.')}});
 refresh();setInterval(refresh,15000);setInterval(()=>refreshAccounts(),120000);
+
+$('#vault-form').addEventListener('submit',async e=>{e.preventDefault();let input=$('#vault-password'),button=e.currentTarget.querySelector('button');button.disabled=true;try{let r=await fetch('/api/cofre/ativar',{method:'POST',body:new URLSearchParams({chave:token,senha:input.value})});let x=await r.json();if(!r.ok)throw Error(x.error||'Não foi possível abrir o cofre.');input.value='';notice(x.message);await refresh();await refreshAccounts(true)}catch(error){notice(error.message)}finally{button.disabled=false}});

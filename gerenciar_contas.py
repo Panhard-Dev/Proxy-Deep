@@ -62,6 +62,28 @@ def salvar(contas):
 
 sync_lock=threading.Lock()
 sync_state={'status':'não configurada','mensagem':'Sincronização não configurada.'}
+cofre_lock=threading.Lock()
+senha_cofre=None
+def importar_cofre(senha):
+    remotas=sincronizar_contas.recuperar(senha)
+    with trava:
+        contas=carregar()
+        novas=0
+        for conta in remotas:
+            if not any(hmac.compare_digest(c['deepai_key'],conta['deepai_key']) for c in contas):
+                contas.append(conta)
+                novas+=1
+        if novas: contas_proxy.salvar(contas)
+    return novas
+
+def ciclo_recebimento():
+    while True:
+        time.sleep(120)
+        with cofre_lock: senha=senha_cofre
+        if senha:
+            try: importar_cofre(senha)
+            except (OSError,ValueError,KeyError): pass
+
 def sincronizar_em_fundo():
     global sync_state
     with sync_lock:
@@ -88,8 +110,8 @@ def consultar_saldo(index, conta, force=False):
         if not force and entry and time.monotonic()-entry[0]<120:
             return {'number':index+1, **entry[1]}
     headers={'Api-Key':conta['deepai_key'],'X-DeepAI-Code-Theos':'4',
-             'X-DeepAI-Code-Instance':UI[:24]}
-    if conta.get('machine'): headers['X-DeepAI-Code-Machine']=conta['machine']
+             'X-DeepAI-Code-Instance':UI[:24],
+             'X-DeepAI-Code-Machine':contas_proxy.identificador_maquina()}
     value={'status':'indisponível','saldo':None,'concessao':None,'renova':None}
     try:
         req=urllib.request.Request(BASE+'/theos',headers=headers)
@@ -106,7 +128,13 @@ def consultar_saldo(index, conta, force=False):
                'concessao':numero(payload.get('granted')),
                'renova':str(payload.get('refresh_at') or '')[:64]}
     except urllib.error.HTTPError as e:
-        value['status']='limite' if e.code==429 else 'falha de autenticação' if e.code in (401,403) else 'indisponível'
+        codigo=''
+        try:
+            erro=json.loads(e.read(8192))
+            if isinstance(erro,dict) and isinstance(erro.get('error'),dict):
+                codigo=erro['error'].get('code','')
+        except (OSError,ValueError,TypeError): pass
+        value['status']='limite' if e.code==429 else 'falha de autenticação' if e.code in (401,403) and codigo!='check_in_refused' else 'indisponível'
     except (OSError, ValueError, TypeError):pass
     with saldo_lock:saldo_cache[fingerprint]=(time.monotonic(),value)
     return {'number':index+1, **value}
@@ -205,7 +233,6 @@ class Handler(BaseHTTPRequestHandler):
                 duplicada=any(hmac.compare_digest(str(c.get(campo,'')),key) for c in contas)
                 if not duplicada:
                     nova={campo:key}
-                    if contas and contas[0].get('machine'):nova['machine']=contas[0]['machine']
                     contas.append(nova)
                 salvar(contas)
             titulo='Conta já adicionada.' if duplicada else 'Conta adicionada.'
@@ -213,7 +240,7 @@ class Handler(BaseHTTPRequestHandler):
         except (OSError,ValueError,KeyError,RuntimeError,subprocess.TimeoutExpired): return self.enviar(502,'Não foi possível concluir o login ou atualizar o proxy. Reinicie o gerenciador e tente novamente.')
     def do_POST(self):
         path=urllib.parse.urlsplit(self.path).path
-        if path not in ('/iniciar','/api/verificacao/iniciar'): return self.enviar(404,'Não encontrado.')
+        if path not in ('/iniciar','/api/verificacao/iniciar','/api/importar-conta','/api/cofre/ativar'): return self.enviar(404,'Não encontrado.')
         if self.headers.get('Origin') not in (None,'null',f'http://127.0.0.1:{self.server.server_port}'):
             return self.enviar(403,'Não autorizado.')
         try: size=int(self.headers.get('Content-Length','0'))
@@ -222,6 +249,24 @@ class Handler(BaseHTTPRequestHandler):
         q=urllib.parse.parse_qs(self.rfile.read(size).decode('utf-8','replace'))
         if not hmac.compare_digest(q.get('chave',[''])[0],UI):
             return self.enviar(403,'Não autorizado.')
+        if path=='/api/cofre/ativar':
+            senha=q.get('senha',[''])[0]
+            if not senha or len(senha)>512: return self.json(400,{'error':'Informe a senha do cofre.'})
+            try: novas=importar_cofre(senha)
+            except (OSError,ValueError,KeyError): return self.json(502,{'error':'Não foi possível abrir o cofre. Confira a senha e a conexão.'})
+            global senha_cofre
+            with cofre_lock: senha_cofre=senha
+            return self.json(200,{'message':f'Recebimento automático ativo. {novas} conta(s) adicionada(s).'})
+        if path=='/api/importar-conta':
+            key=q.get('conta',[''])[0]
+            import re
+            if not re.fullmatch(r'[A-Za-z0-9_-]{16,256}',key): return self.json(400,{'error':'Conta inválida.'})
+            with trava:
+                contas=carregar()
+                if not any(hmac.compare_digest(c['deepai_key'],key) for c in contas):
+                    contas.append({'deepai_key':key})
+                    salvar(contas)
+            return self.json(200,{'ok':True})
         if path=='/api/verificacao/iniciar':
             iniciar_verificacao()
             return self.json(200,{'started':True})
@@ -239,6 +284,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     threading.Thread(target=ciclo_sincronizacao,daemon=True).start()
+    threading.Thread(target=ciclo_recebimento,daemon=True).start()
     port=int(os.environ.get('DEEPAI_PAINEL_PORTA','0'))
     servidor=ThreadingHTTPServer(('127.0.0.1',port),Handler)
     url=f'http://127.0.0.1:{servidor.server_port}/?chave={UI}'

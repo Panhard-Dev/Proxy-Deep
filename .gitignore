@@ -1,6 +1,7 @@
 # Sessões, histórico e arquivos locais
 contas.json
 contas.json.tmp
+.machine-id
 *.sqlite3
 *.sqlite3-*
 runtime_proxy.json

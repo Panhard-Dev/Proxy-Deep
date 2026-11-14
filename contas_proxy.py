@@ -1,6 +1,8 @@
 """Armazenamento local e seleção de contas do proxy."""
 import json
 import os
+import re
+import secrets
 import threading
 import time
 import urllib.error
@@ -10,9 +12,25 @@ import uso_proxy
 from pathlib import Path
 
 ARQUIVO = Path(__file__).resolve().parent / 'contas.json'
+ARQUIVO_MAQUINA = ARQUIVO.with_name('.machine-id')
 _lock = threading.Lock()
 _proxima = 0
 _bloqueadas = {}
+
+def identificador_maquina():
+    try:
+        fd = os.open(ARQUIVO_MAQUINA, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        pass
+    else:
+        with os.fdopen(fd, 'w', encoding='ascii') as arquivo:
+            arquivo.write(secrets.token_hex(32))
+    # Outro processo pode estar terminando de criar o arquivo.
+    for _ in range(50):
+        valor = ARQUIVO_MAQUINA.read_text(encoding='ascii').strip()
+        if re.fullmatch(r'[a-f0-9]{64}', valor): return valor
+        time.sleep(.02)
+    raise ValueError('Identificador de máquina inválido.')
 
 def carregar():
     if not ARQUIVO.exists(): return []
@@ -53,8 +71,8 @@ def abrir(url, body, extra_headers, instance, timeout=930):
     for i in ordem:
         conta = contas[i]
         headers = {'X-DeepAI-Code-Theos': '4', 'X-DeepAI-Code-Instance': instance,
+                   'X-DeepAI-Code-Machine': identificador_maquina(),
                    'Api-Key': conta['deepai_key'], **extra_headers}
-        if conta.get('machine'): headers['X-DeepAI-Code-Machine'] = conta['machine']
         req = urllib.request.Request(url, data=body, headers=headers, method='POST' if body is not None else 'GET')
         try:
             resposta = urllib.request.urlopen(req, timeout=timeout)
