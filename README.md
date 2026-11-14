@@ -37,3 +37,5 @@ Para adicionar uma conta, clique em **Adicionar conta** no painel e conclua o lo
 ## Diagnóstico
 
 Execute `python3 diagnostico_proxy.py` no Linux/macOS ou `py -3 diagnostico_proxy.py` no Windows para verificar contas e proteção de tráfego. O proxy limita cada conta a 60 requisições por segundo; ao atingir o limite, pausa a conta por cinco minutos e tenta outra. Uma resposta HTTP 429 também pausa a conta, respeitando uma espera maior quando informada pelo serviço. O controle não impõe limite diário de requisições e não garante que o provedor aceite todas as chamadas.
+
+Quando a DeepAI rejeita uma conversa por excesso de contexto, o proxy tenta resumir o histórico anterior com o mesmo modelo e repetir a requisição. A recuperação funciona em Chat Completions, Responses e Messages, preservando as instruções e o turno atual. O resumo pode perder detalhes e gera chamadas adicionais ao provedor. Se não houver histórico anterior, o histórico anterior contiver imagens, o resumo falhar ou o turno atual sozinho ultrapassar o limite, o erro continua sendo retornado ao cliente.

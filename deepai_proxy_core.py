@@ -22,6 +22,7 @@ import responses_bridge
 import anthropic_bridge
 import contas_proxy
 import cadencia_stream
+import compactacao
 
 BASE = "https://api.deepai.org/deepai_code"
 INSTANCE = secrets.token_hex(16)
@@ -208,9 +209,8 @@ class Gateway(BaseHTTPRequestHandler):
         if isinstance(payload.get('messages'), list):
             payload['messages'] = [dict(m, role='system') if isinstance(m, dict) and m.get('role') == 'developer' else m for m in payload['messages']]
         requested_model = payload["model"]
-        body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         try:
-            upstream = upstream_open("/chat/completions", body, affinity=self.headers.get('X-Session-Affinity'))
+            upstream = compactacao.abrir_com_compactacao(upstream_open, "/chat/completions", payload, affinity=self.headers.get('X-Session-Affinity'))
         except urllib.error.HTTPError as error:
             return self.upstream_error(error)
         with upstream:
@@ -268,9 +268,8 @@ class Gateway(BaseHTTPRequestHandler):
         if not model or model.get('api') != 'openai-responses':
             response_request = copy.deepcopy(payload)
             chat_payload, custom = responses_bridge.translate(payload)
-            body = json.dumps(chat_payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
             try:
-                upstream = upstream_open("/chat/completions", body, affinity=self.headers.get('X-Session-Affinity'))
+                upstream = compactacao.abrir_com_compactacao(upstream_open, "/chat/completions", chat_payload, affinity=self.headers.get('X-Session-Affinity'))
             except urllib.error.HTTPError as error:
                 return self.upstream_error(error)
             with upstream:
@@ -278,9 +277,8 @@ class Gateway(BaseHTTPRequestHandler):
                     return self.fail(upstream.status, "Não foi possível concluir a requisição.", upstream.headers.get("Retry-After"))
                 responses_bridge.relay(self, upstream, response_request, custom)
             return
-        body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         try:
-            upstream = upstream_open("/responses", body, affinity=self.headers.get('X-Session-Affinity'))
+            upstream = compactacao.abrir_com_compactacao(upstream_open, "/responses", payload, affinity=self.headers.get('X-Session-Affinity'))
         except urllib.error.HTTPError as error:
             return self.upstream_error(error)
         with upstream:
@@ -303,8 +301,7 @@ class Gateway(BaseHTTPRequestHandler):
     def proxy_anthropic(self, payload):
         payload = normalize_chat_payload(payload)
         request = anthropic_bridge.translate(payload)
-        body = json.dumps(request, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
-        with upstream_open('/chat/completions', body, affinity=self.headers.get('X-Session-Affinity')) as upstream:
+        with compactacao.abrir_com_compactacao(upstream_open, '/chat/completions', request, affinity=self.headers.get('X-Session-Affinity')) as upstream:
             anthropic_bridge.relay(self, upstream, payload)
 
     def handle_request(self):
