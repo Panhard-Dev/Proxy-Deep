@@ -23,7 +23,9 @@ import anthropic_bridge
 import contas_proxy
 import cadencia_stream
 import compactacao
+import contexto
 import atualizacao
+import memoria
 
 BASE = "https://api.deepai.org/deepai_code"
 INSTANCE = secrets.token_hex(16)
@@ -204,14 +206,14 @@ class Gateway(BaseHTTPRequestHandler):
                 return public_model(model)
         return None
 
-    def proxy_chat(self, payload):
+    def proxy_chat(self, payload, escopo=None):
         payload = normalize_chat_payload(payload)
         payload.setdefault('stream', False)
         if isinstance(payload.get('messages'), list):
             payload['messages'] = [dict(m, role='system') if isinstance(m, dict) and m.get('role') == 'developer' else m for m in payload['messages']]
         requested_model = payload["model"]
         try:
-            upstream = compactacao.abrir_com_compactacao(upstream_open, "/chat/completions", payload, affinity=self.headers.get('X-Session-Affinity'))
+            upstream = compactacao.abrir_com_compactacao(upstream_open, "/chat/completions", payload, affinity=self.headers.get('X-Session-Affinity'), escopo=escopo)
         except urllib.error.HTTPError as error:
             return self.upstream_error(error)
         with upstream:
@@ -262,7 +264,7 @@ class Gateway(BaseHTTPRequestHandler):
                 self.wfile.write(line)
                 self.wfile.flush()
 
-    def proxy_responses(self, payload):
+    def proxy_responses(self, payload, escopo=None):
         payload = normalize_chat_payload(payload)
         requested_model = payload["model"]
         model = self.model_by_id(requested_model)
@@ -270,7 +272,7 @@ class Gateway(BaseHTTPRequestHandler):
             response_request = copy.deepcopy(payload)
             chat_payload, custom = responses_bridge.translate(payload)
             try:
-                upstream = compactacao.abrir_com_compactacao(upstream_open, "/chat/completions", chat_payload, affinity=self.headers.get('X-Session-Affinity'))
+                upstream = compactacao.abrir_com_compactacao(upstream_open, "/chat/completions", chat_payload, affinity=self.headers.get('X-Session-Affinity'), escopo=escopo)
             except urllib.error.HTTPError as error:
                 return self.upstream_error(error)
             with upstream:
@@ -279,7 +281,7 @@ class Gateway(BaseHTTPRequestHandler):
                 responses_bridge.relay(self, upstream, response_request, custom)
             return
         try:
-            upstream = compactacao.abrir_com_compactacao(upstream_open, "/responses", payload, affinity=self.headers.get('X-Session-Affinity'))
+            upstream = compactacao.abrir_com_compactacao(upstream_open, "/responses", payload, affinity=self.headers.get('X-Session-Affinity'), escopo=escopo)
         except urllib.error.HTTPError as error:
             return self.upstream_error(error)
         with upstream:
@@ -299,10 +301,10 @@ class Gateway(BaseHTTPRequestHandler):
                 self.wfile.write(chunk)
                 self.wfile.flush()
 
-    def proxy_anthropic(self, payload):
+    def proxy_anthropic(self, payload, escopo=None):
         payload = normalize_chat_payload(payload)
         request = anthropic_bridge.translate(payload)
-        with compactacao.abrir_com_compactacao(upstream_open, '/chat/completions', request, affinity=self.headers.get('X-Session-Affinity')) as upstream:
+        with compactacao.abrir_com_compactacao(upstream_open, '/chat/completions', request, affinity=self.headers.get('X-Session-Affinity'), escopo=escopo) as upstream:
             anthropic_bridge.relay(self, upstream, payload)
 
     def handle_request(self):
@@ -312,6 +314,8 @@ class Gateway(BaseHTTPRequestHandler):
         try:
             if self.command == "GET" and path == "/health":
                 return self.write_json(200, {"status": "ok", "provider": "DeepAI", "version": atualizacao.VERSAO, "instance": INSTANCE})
+            if self.command == "GET" and path == "/internal/contexto":
+                return self.write_json(200, {"contexto": contexto.ultimo()})
             if self.command == "POST" and path == "/internal/shutdown":
                 body = self.read_body()
                 if not isinstance(body, dict) or not secrets.compare_digest(str(body.get('instance', '')), INSTANCE):
@@ -328,11 +332,17 @@ class Gateway(BaseHTTPRequestHandler):
                 model = self.model_by_id(path[len("/v1/models/"):])
                 return self.write_json(200, model) if model else self.fail(404, "Modelo não encontrado.", code="model_not_found")
             if self.command == "POST" and path == "/v1/chat/completions":
-                return self.proxy_chat(self.read_body())
+                payload = self.read_body(); escopo = memoria.escopo(self.headers, payload)
+                payload = memoria.aplicar(payload, escopo); contexto.registrar(payload, bool(escopo))
+                return self.proxy_chat(payload, escopo)
             if self.command == "POST" and path == "/v1/responses":
-                return self.proxy_responses(self.read_body())
+                payload = self.read_body(); escopo = memoria.escopo(self.headers, payload)
+                payload = memoria.aplicar(payload, escopo); contexto.registrar(payload, bool(escopo))
+                return self.proxy_responses(payload, escopo)
             if self.command == "POST" and path == "/v1/messages":
-                return self.proxy_anthropic(self.read_body())
+                payload = self.read_body(); escopo = memoria.escopo(self.headers, payload)
+                payload = memoria.aplicar(payload, escopo); contexto.registrar(payload, bool(escopo))
+                return self.proxy_anthropic(payload, escopo)
             return self.fail(404, "Endpoint não suportado.", code="not_found")
         except responses_bridge.Unsupported as error:
             return self.fail(400, str(error), code="unsupported_request")

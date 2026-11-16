@@ -35,7 +35,7 @@ class AtualizadorTests(unittest.TestCase):
         self.assertEqual(json.loads((path/'manifest.json').read_text())['sha'], sha)
 
     def test_recusa_caminhos_e_dados_locais(self):
-        for name in ('../fora', '/absoluto', 'a/../../fora', 'C:/fora', '.git/config', 'contas.json', 'uso.sqlite3'):
+        for name in ('../fora', '/absoluto', 'a/../../fora', 'C:/fora', '.git/config', 'contas.json', 'uso.sqlite3', '.memoria-projeto.json'):
             with self.subTest(name=name), self.assertRaises(ValueError):
                 atualizador.caminho_seguro(name)
 

@@ -41,7 +41,7 @@ class AtualizadorIntegracao(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / 'app'
             shutil.copytree(SOURCE, root, ignore=shutil.ignore_patterns('.git', '.deps', 'worker-app', '__pycache__', '*.sqlite3*',
-                '*.log', 'contas.json', '.machine-id', 'runtime_proxy.json', '.atualizacao-status.json', '.atualizacao-backup'))
+                '*.log', 'contas.json', '.machine-id', '.memoria-projeto.json', 'runtime_proxy.json', '.atualizacao-status.json', '.atualizacao-backup'))
             (root/'contas.json').write_text('[]')
             (root/'.machine-id').write_text('teste-preservado')
             stage = Path(directory)/'stage'; (stage/'arquivos').mkdir(parents=True)

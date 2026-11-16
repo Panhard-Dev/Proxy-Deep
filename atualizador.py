@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parent
 STATUS = ROOT / '.atualizacao-status.json'
 LOCK = threading.Lock()
 _ocupado = False
-PROTEGIDOS = {'contas.json', 'runtime_proxy.json', '.machine-id', '.painel.log', '.proxy.log', '.atualizacao-status.json'}
+PROTEGIDOS = {'contas.json', 'runtime_proxy.json', '.machine-id', '.painel.log', '.proxy.log', '.atualizacao-status.json', '.memoria-projeto.json'}
 
 
 def estado(status, mensagem):

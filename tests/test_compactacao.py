@@ -96,6 +96,120 @@ class CompactacaoTests(unittest.TestCase):
         compactacao.abrir_com_compactacao(abrir, '/chat/completions', request).close()
         self.assertEqual(calls[-1]['messages'][-3:], request['messages'][-3:])
 
+    def test_pedido_extenso_e_dividido_em_quatro_e_reunido(self):
+        content = 'A'*30 + 'B'*30 + 'C'*30 + 'D'*30
+        request = {'model': 'test', 'messages': [{'role': 'system', 'content': 'instruções'}, {'role': 'user', 'content': content}], 'stream': True}
+        calls = []
+        def abrir(path, body, affinity=None):
+            p=json.loads(body);calls.append(p)
+            if len(calls) <= 4:
+                trecho = p['messages'][1]['content'].split('\n',1)[1]
+                return resposta({'choices': [{'finish_reason':'stop', 'message':{'content':trecho[0]}}]})
+            return resposta({'ok':True})
+        with patch.object(compactacao, 'PEDIDO_GRANDE', 100):
+            compactacao.abrir_com_compactacao(abrir, '/chat/completions', request).close()
+        self.assertEqual(len(calls), 5)
+        self.assertEqual(calls[-1]['messages'][0], request['messages'][0])
+        self.assertTrue(calls[-1]['stream'])
+        for i, letter in enumerate('ABCD', 1):
+            self.assertIn(f'[Parte {i}]\n{letter}', calls[-1]['messages'][-1]['content'])
+
+    def test_parte_acima_da_janela_e_dividida_novamente(self):
+        calls=[]
+        def abrir(path, body, affinity=None):
+            p=json.loads(body); trecho=p['messages'][1]['content'].split('\n',1)[1]; calls.append(trecho)
+            if len(trecho)>10: raise erro()
+            return resposta({'choices':[{'finish_reason':'stop','message':{'content':trecho}}]})
+        result=compactacao._mapear_partes(abrir,'test','A'*80,None,False)
+        self.assertEqual(result.count('[Parte '),4)
+        self.assertEqual(len(calls),12)
+
+    def test_pedido_com_imagem_nao_e_substituido_por_resumo_textual(self):
+        request={'model':'test','messages':[{'role':'user','content':[{'type':'text','text':'a'*100}, {'type':'image_url','image_url':{'url':'imagem'}}]}]}
+        with patch.object(compactacao,'PEDIDO_GRANDE',50):
+            self.assertIsNone(compactacao._dividir_pedido(None,'/chat/completions',request,None))
+
+    def test_falha_local_de_limite_e_repetida_sem_reenviar_erros_do_provedor(self):
+        body=b'{}';calls=[]
+        def abrir(path,request,affinity=None):
+            calls.append(request)
+            if len(calls)==1:
+                raise urllib.error.HTTPError('x',503,'',{'Retry-After':'1'},io.BytesIO(b'{"error":{"code":"rate_guard_unavailable","retryable":true}}'))
+            return resposta({'ok':True})
+        with patch.object(compactacao.time,'sleep') as sleep:
+            with compactacao._abrir_com_retry_local(abrir,'/chat/completions',body,None) as response:
+                self.assertTrue(json.load(response)['ok'])
+        self.assertEqual(calls,[body,body]);sleep.assert_called_once_with(1)
+        other=urllib.error.HTTPError('x',503,'',{},io.BytesIO(b'{"error":{"code":"service_unavailable"}}'))
+        with patch.object(compactacao.time,'sleep') as sleep, self.assertRaises(urllib.error.HTTPError):
+            compactacao._abrir_com_retry_local(lambda *a,**k: (_ for _ in ()).throw(other),'/chat/completions',body,None)
+        sleep.assert_not_called()
+
+    def test_slot_ocupado_espera_e_retorna_sem_repetir_outros_409(self):
+        calls=[]
+        def abrir(path,body,affinity=None):
+            calls.append(body)
+            if len(calls)==1:
+                raise urllib.error.HTTPError('x',409,'',{'Retry-After':'1'},io.BytesIO(b'{"error":{"code":"session_busy"}}'))
+            return resposta({'ok':True})
+        with patch.object(compactacao.time,'sleep') as sleep:
+            with compactacao._abrir_esperando_slot(abrir,'/chat/completions',b'{}',None) as response:
+                self.assertTrue(json.load(response)['ok'])
+        self.assertEqual(len(calls),2);sleep.assert_called_once_with(1)
+        error=urllib.error.HTTPError('x',409,'',{},io.BytesIO(b'{"error":{"code":"other"}}'))
+        with patch.object(compactacao.time,'sleep') as sleep, self.assertRaises(urllib.error.HTTPError):
+            compactacao._abrir_esperando_slot(lambda *a,**k:(_ for _ in ()).throw(error),'/chat/completions',b'{}',None)
+        sleep.assert_not_called()
+        after=urllib.error.HTTPError('x',503,'',{},io.BytesIO(b'{"error":{"code":"rate_guard_unavailable"}}'))
+        with patch.object(compactacao.time,'sleep') as sleep, self.assertRaises(urllib.error.HTTPError):
+            compactacao._abrir_com_retry_local(lambda *a,**k: (_ for _ in ()).throw(after),'/chat/completions',b'{}',None)
+        sleep.assert_not_called()
+
+    def test_historico_grande_e_reduzido_antes_de_chamar_o_provedor(self):
+        request={'model':'test','messages':[{'role':'user','content':'antigo'*50},
+                 {'role':'assistant','content':'resultado'}, {'role':'user','content':'pedido atual'}]}
+        calls=[]
+        def abrir(path,body,affinity=None):
+            payload=json.loads(body);calls.append(payload)
+            return resposta({'ok':True})
+        with patch.object(compactacao,'HISTORICO_GRANDE',280), patch.object(compactacao,'_resumir',return_value='resumo') as resumir:
+            compactacao.abrir_com_compactacao(abrir,'/chat/completions',request).close()
+        resumir.assert_called_once()
+        self.assertEqual(len(calls),1)
+        self.assertEqual(calls[0]['messages'][-1]['content'],'pedido atual')
+        self.assertIn('resumo', calls[0]['messages'][0]['content'])
+
+    def test_nao_envia_instrucoes_grandes_irredutiveis_para_truncamento_silencioso(self):
+        request={'model':'test','tools':[{'description':'a'*300}], 'messages':[{'role':'user','content':'oi'}]}
+        with patch.object(compactacao,'HISTORICO_GRANDE',200):
+            with self.assertRaisesRegex(ValueError,'instruções ou ferramentas'):
+                compactacao.abrir_com_compactacao(lambda *a,**k:self.fail('não deve enviar'),'/chat/completions',request)
+
+    def test_segmentos_preservam_todo_texto_e_limite(self):
+        texto = ('linha com dados preservados\n' * 80) + 'identificador-especial'
+        trechos=[]
+        def abrir(path,body,affinity=None):
+            p=json.loads(body);trechos.append(p['messages'][1]['content'].split('\n',1)[1])
+            return resposta({'choices':[{'finish_reason':'stop','message':{'content':'nota'}}]})
+        # Limitar concorrência para verificar a ordem de envio dos trechos.
+        from concurrent.futures import ThreadPoolExecutor
+        with patch.object(compactacao,'TAMANHO_SEGMENTO',200), patch.object(compactacao,'ThreadPoolExecutor',side_effect=lambda max_workers: ThreadPoolExecutor(max_workers=1)):
+            compactacao._mapear_partes(abrir,'test',texto,None,False)
+        self.assertEqual(''.join(trechos),texto)
+        self.assertTrue(all(len(t)<=200 for t in trechos))
+
+    def test_segmentos_limitam_bytes_utf8_e_escapes_json(self):
+        texto = ('ação 😀 "\\\n' * 150) + 'fim'
+        trechos=[]
+        def abrir(path,body,affinity=None):
+            p=json.loads(body);trechos.append(p['messages'][1]['content'].split('\n',1)[1])
+            return resposta({'choices':[{'finish_reason':'stop','message':{'content':'nota'}}]})
+        from concurrent.futures import ThreadPoolExecutor
+        with patch.object(compactacao,'TAMANHO_SEGMENTO',200), patch.object(compactacao,'MAX_PARTES',128), patch.object(compactacao,'ThreadPoolExecutor',side_effect=lambda max_workers: ThreadPoolExecutor(max_workers=1)):
+            compactacao._mapear_partes(abrir,'test',texto,None,False)
+        self.assertEqual(''.join(trechos),texto)
+        self.assertTrue(all(len(json.dumps(t,ensure_ascii=False)[1:-1].encode())<=200 for t in trechos))
+
     def test_tres_protocolos_usam_mesmo_recuperador(self):
         handler = object.__new__(core.Gateway)
         handler.headers = {}

@@ -102,7 +102,7 @@ def abrir(url, body, extra_headers, instance, timeout=930):
             esperas.append(limite.segundos)
             continue
         except (OSError, sqlite3.Error) as erro:
-            corpo = json.dumps({'error': {'code': 'rate_guard_unavailable', 'message': 'Não foi possível verificar o limite local de requisições.'}}).encode()
+            corpo = json.dumps({'error': {'code': 'rate_guard_unavailable', 'message': 'Não foi possível verificar o limite local de requisições.', 'retryable': True}}).encode()
             raise urllib.error.HTTPError(url, 503, 'Proteção de tráfego indisponível', {'Retry-After':'5'}, io.BytesIO(corpo)) from erro
         headers = {'X-DeepAI-Code-Theos': LANE_VERSION, 'X-DeepAI-Code-Instance': instance,
                    'X-DeepAI-Code-Machine': identificador_maquina(),

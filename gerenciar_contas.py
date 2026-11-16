@@ -8,6 +8,7 @@ import uso_proxy
 import sincronizar_contas
 import atualizacao
 import atualizador
+import memoria
 import proxy
 import iniciar
 import socket
@@ -211,6 +212,21 @@ class Handler(BaseHTTPRequestHandler):
             return self.json(200,atualizacao.verificar())
         if u.path=='/api/atualizacao/estado' and autorizado:
             return self.json(200,atualizador.ler_estado())
+        if u.path=='/api/memoria' and autorizado:
+            return self.json(200,memoria.estatisticas())
+        if u.path=='/api/memoria/notas' and autorizado:
+            try: return self.json(200,memoria.listar(q.get('offset',['0'])[0]))
+            except (ValueError, OverflowError): return self.json(400,{'error':'Página inválida.'})
+            except (OSError, sqlite3.Error): return self.json(503,{'error':'Memória local indisponível.'})
+        if u.path=='/api/contexto' and autorizado:
+            try:
+                runtime=json.loads((Path(__file__).resolve().parent/'runtime_proxy.json').read_text())
+                port=int(runtime['port'])
+                if not 1 <= port <= 65535: raise ValueError('Porta inválida.')
+                with urllib.request.urlopen(f'http://127.0.0.1:{port}/internal/contexto',timeout=2) as resposta:
+                    return self.json(200,json.load(resposta))
+            except (OSError,ValueError,KeyError,TypeError):
+                return self.json(200,{'contexto':None})
         if u.path=='/api/painel' and autorizado:
             with trava: contas=carregar()
             runtime={}
@@ -264,7 +280,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.enviar(502,'Não foi possível concluir o login ou atualizar o proxy. Reinicie o gerenciador e tente novamente.')
     def do_POST(self):
         path=urllib.parse.urlsplit(self.path).path
-        if path not in ('/iniciar','/api/verificacao/iniciar','/api/importar-conta','/api/atualizacao/iniciar','/api/atualizacao/desligar'): return self.enviar(404,'Não encontrado.')
+        if path not in ('/iniciar','/api/verificacao/iniciar','/api/importar-conta','/api/atualizacao/iniciar','/api/atualizacao/desligar','/api/memoria/limpar','/api/memoria/projeto'): return self.enviar(404,'Não encontrado.')
         if self.headers.get('Origin') not in (None,'null',f'http://127.0.0.1:{self.server.server_port}'):
             return self.enviar(403,'Não autorizado.')
         try: size=int(self.headers.get('Content-Length','0'))
@@ -273,6 +289,18 @@ class Handler(BaseHTTPRequestHandler):
         q=urllib.parse.parse_qs(self.rfile.read(size).decode('utf-8','replace'))
         if not hmac.compare_digest(q.get('chave',[''])[0],UI):
             return self.enviar(403,'Não autorizado.')
+        if path=='/api/memoria/limpar':
+            try:
+                memoria.limpar()
+                return self.json(200,{'ok':True})
+            except (OSError,sqlite3.Error,ValueError):
+                return self.json(503,{'error':'Não foi possível limpar a memória local.'})
+        if path=='/api/memoria/projeto':
+            try:
+                memoria.configurar_projeto(q.get('projeto',[''])[0])
+                return self.json(200,{'ok':True})
+            except (OSError,ValueError):
+                return self.json(400,{'error':'Não foi possível salvar o identificador do projeto.'})
         if path=='/api/atualizacao/desligar':
             self.json(200,{'ok':True})
             threading.Thread(target=self.server.shutdown,daemon=True).start()
